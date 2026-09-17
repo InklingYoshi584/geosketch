@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>geosketch</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" />
+    <link rel="stylesheet" href="./src/ui/chrome.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="toolbar">
+        <button id="btn-undo" title="撤销 (Ctrl+Z)">↶</button>
+        <button id="btn-redo" title="重做 (Ctrl+Shift+Z)">↷</button>
+        <span class="sep" aria-hidden="true"></span>
+        <button id="btn-open" title="打开 (Ctrl+O)">打开</button>
+        <button id="btn-save" title="保存 (Ctrl+S)">保存</button>
+        <span class="grow"></span>
+        <span id="status" role="status"></span>
+      </header>
+      <canvas id="board"></canvas>
+      <div id="chip" hidden></div>
+      <div id="actionbar" hidden></div>
+      <div id="sheet" hidden></div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

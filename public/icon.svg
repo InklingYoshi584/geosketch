@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="geosketch">
+  <!-- Full-bleed background so the icon survives maskable cropping on Android. -->
+  <rect width="64" height="64" fill="#ffffff" />
+  <!-- Mark: a triangle inscribed in its circumcircle, with its three vertices. -->
+  <g fill="none" stroke="#1f2937" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="32" cy="32" r="23" />
+    <path d="M32 9 L51.92 43.5 L12.08 43.5 Z" />
+  </g>
+  <g fill="#1f2937">
+    <circle cx="32" cy="9" r="3.2" />
+    <circle cx="51.92" cy="43.5" r="3.2" />
+    <circle cx="12.08" cy="43.5" r="3.2" />
+  </g>
+</svg>

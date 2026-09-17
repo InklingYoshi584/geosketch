@@ -1,12 +1,14 @@
 /*
  * geosketch service worker — offline app shell, no dependencies.
  *
- * Strategy: cache-first for same-origin GETs, falling back to the network and
- * caching what comes back. Vite emits content-hashed assets, so a cached hit is
- * always the file that belongs to that URL; `index.html` is precached and any
- * miss (a fresh deploy, a query string) simply goes to the network.
+ * Strategy:
+ * - Navigations (`request.mode === 'navigate'`): network-first with a cached
+ *   fallback. A fresh deploy must reach returning clients on the next visit;
+ *   offline still serves the last cached shell.
+ * - Other same-origin GETs (Vite's content-hashed assets): cache-first, since a
+ *   cached hit is always the exact file that belongs to that URL.
  */
-const CACHE = 'geosketch-v1';
+const CACHE = 'geosketch-v2';
 const PRECACHE = ['./', './icon.svg'];
 
 self.addEventListener('install', (event) => {
@@ -27,24 +29,34 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+/** Only store complete, same-origin responses: an opaque or partial reply would poison the cache. */
+function cacheIfUsable(request, response) {
+  if (response.status === 200 && response.type === 'basic') {
+    const copy = response.clone();
+    caches.open(CACHE).then((cache) => cache.put(request, copy));
+  }
+  return response;
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => cacheIfUsable(request, response))
+        .catch(async () => (await caches.match(request)) ?? (await caches.match('./')) ?? Response.error()),
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
-      return fetch(request).then((response) => {
-        // Only store complete, same-origin responses: caching an opaque or
-        // partial reply would poison the cache for the next visit.
-        if (response.status === 200 && response.type === 'basic') {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(request, copy));
-        }
-        return response;
-      });
+      return fetch(request).then((response) => cacheIfUsable(request, response));
     }),
   );
 });

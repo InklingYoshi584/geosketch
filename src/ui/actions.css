@@ -1,0 +1,160 @@
+/*
+ * Chrome for the selection-first action layer: the contextual action bar, the
+ * undefined chip (with its popover) and the dependency inspector.
+ *
+ * Positioning lives here rather than in chrome.css, which only gives the three
+ * containers `position: absolute` (main owns that file). Every control is
+ * touch-sized: a whiteboard finger needs 44 px, not 32.
+ */
+
+#actionbar {
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: calc(100vw - 24px);
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+
+#actionbar[hidden] {
+  display: none;
+}
+
+.ab-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ab-group-label {
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ab-empty {
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ab-btn,
+.ab-close,
+.sheet-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  font: inherit;
+  color: var(--fg);
+  background: #f9fafb;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ab-btn:active,
+.ab-close:active,
+.sheet-btn:active {
+  background: #eef2ff;
+}
+
+.ab-close {
+  padding: 0 12px;
+  color: var(--muted);
+}
+
+#chip {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#chip[hidden] {
+  display: none;
+}
+
+.chip-pop {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 8px;
+  border: 1px solid var(--chip-line);
+  border-radius: 10px;
+  background: #fffbeb;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  cursor: default;
+}
+
+.chip-pop[hidden] {
+  display: none;
+}
+
+.chip-pop-title {
+  padding: 2px 4px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chip-item {
+  padding: 6px 4px;
+  border-top: 1px solid var(--chip-line);
+  font-size: 13px;
+}
+
+.chip-item-name {
+  font-weight: 600;
+}
+
+.chip-item-reason {
+  color: var(--muted);
+}
+
+#sheet {
+  right: 12px;
+  bottom: 84px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+
+#sheet[hidden] {
+  display: none;
+}
+
+.sheet-title {
+  font-size: 14px;
+}
+
+.sheet-reason {
+  font-size: 13px;
+  color: #b45309;
+}
+
+.sheet-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sheet-btn.danger {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}

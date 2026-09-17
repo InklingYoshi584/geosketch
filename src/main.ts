@@ -2,6 +2,9 @@ import { Store } from './app/store';
 import { attachBoard } from './interaction/board';
 import { registerServiceWorker } from './io/pwa';
 import { autosaveClear, autosaveLoad, autosaveSave, openDocFile, saveDocFile } from './io/persist';
+import { attachActionBar } from './ui/actions';
+import { attachChip } from './ui/chip';
+import { attachInspector } from './ui/inspector';
 
 function el<T extends HTMLElement>(sel: string): T {
   const node = document.querySelector<T>(sel);
@@ -30,7 +33,12 @@ let lastAutosave = 0;
 function refreshChrome(): void {
   btnUndo.disabled = !store.canUndo();
   btnRedo.disabled = !store.canRedo();
-  status.textContent = `${store.doc.objects.length} 个对象`;
+  const count = store.doc.objects.length;
+  const selected = store.selection.size;
+  status.textContent =
+    selected > 0
+      ? `${count} 个对象 · 已选 ${selected}`
+      : `${count} 个对象 · 轻点空白处放点，点选对象后可构造`;
 }
 
 store.subscribe(() => {
@@ -43,6 +51,9 @@ store.subscribe(() => {
 });
 
 attachBoard(board, store);
+attachActionBar(el<HTMLElement>('#actionbar'), store);
+attachChip(el<HTMLElement>('#chip'), store);
+attachInspector(el<HTMLElement>('#sheet'), store);
 refreshChrome();
 
 btnUndo.addEventListener('click', () => store.undo());

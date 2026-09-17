@@ -239,6 +239,48 @@ deferring *features* is fine; an unrepresentable *document model* is not.
 - Animation = advance path parameters on `requestAnimationFrame`; trace =
   bounded ring buffer of past geometries per traced object.
 
+### 5.1 Frozen implementation contract (M1)
+
+Geometry kinds: `point | segment | line | ray | circle | polygon | number`
+(`number` carries `{value, unit?: 'deg'}`; measured numbers are first-class objects
+that constructions consume — e.g. `circle.centerRadius` takes `[point, number]`).
+
+Path parameterisation (used by `point.onObject` and intersection root ordering):
+segment `P(t) = a + t(b − a)`, t ∈ [0,1]; line/ray `P(t) = at + t·dir` (unit dir,
+ray t ≥ 0); circle `P(t) = center + r(cos t, sin t)`. Stored `t` is never clamped by
+`compute` (proportions survive parent motion); interaction clamps while dragging via
+`projectPoint`. `scene.ts` exports `evalPath`, `projectPoint`, `anchorsOf`,
+`isPathGeometry`, `unitDirection`, `magnitude`.
+
+Registry: `ObjType {name, title, parentKinds, compute}`, `GeometryKind = kind | 'path' | 'any'`,
+`kindMatches()`. `title` is the Chinese UI label; registered types (name → title):
+segment 线段, line 直线, ray 射线, circle.centerPoint 圆, circle.centerRadius 圆(圆心+半径),
+polygon 多边形 (variadic, ≥3 points), point.onObject 对象上的点, intersection 交点,
+midpoint 中点, perpendicular 垂线, parallel 平行线, angleBisector 角平分线 (vertex = middle
+parent), measure.distance 距离, measure.angle 角度, measure.area 面积.
+
+Actions (`engine/actions.ts`): `actionsFor(doc, scene, selection)` — **strict arity**
+(selection length === signature length; a `[A,B,C]` selection never silently builds a
+segment from two of them); the single exception is the variadic polygon. Selection
+order is click order. `Action.apply()` returns `{created, select}`; the UI applies it
+through `store.edit` (one undo entry), and the created objects become the selection
+so constructions chain.
+
+Selection semantics (touch-first): tap empty space creates a free point **and appends
+it to the selection** (three taps + one button = triangle); tap an object toggles it in
+the selection; drag selects and moves (free points by `{x,y}`, glued points by
+re-projecting `{t}`); non-path objects are selectable but not draggable; ✕ / Escape
+clears. `Delete` deletes with cascade **preview** (D10); `Detach` freezes a dependent
+point as `point.free` at its current position.
+
+Undefined objects (D9) are unhittable, hide with their dependents, and are listed by
+the chip with their reason (`无交点`, `两直线平行`, `半径为零`, `退化`, `圆没有平行线`, …).
+
+Number readouts render at the parents' average anchor + `label.dx/dy` (default (0,−14)),
+formatted `text = value` with `unit === 'deg'` ⇒ `value.toFixed(1)°` else `toFixed(2)`;
+they are hit-testable via `hitTest(scene, world, tol, anchorsOf(doc, scene))` — the
+store's `pick` passes that map.
+
 ## 6. Files & IO
 
 - `.geosketch` = UTF-8 JSON, `version` field; unknown fields and unknown object

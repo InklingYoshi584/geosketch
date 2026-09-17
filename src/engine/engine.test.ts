@@ -21,7 +21,8 @@ const OFFSET = 'test.offset';
 function registerOffsetType(): void {
   registerType({
     name: OFFSET,
-    parentTypes: [['point']],
+    title: '测试偏移点',
+    parentKinds: [['point']],
     compute(parents, _params, _env) {
       const parent = parents[0];
       if (parent.kind !== 'point') return { reason: 'needs a point parent' };
@@ -149,6 +150,21 @@ describe('hitTest', () => {
     expect(hitTest(scene, { x: 5, y: 0 }, 0.1)).toEqual(['far']);
     // From (5, 0): far 0, edge 3, right 4, near 4.5, left 6 (out of tolerance).
     expect(hitTest(scene, { x: 5, y: 0 }, 5)).toEqual(['far', 'edge', 'right', 'near']);
+  });
+
+  it('prefers a point over the path it lies on when both are hit', () => {
+    const scene = computeScene(
+      docWith([
+        point('a', 0, 0),
+        point('b', 4, 0),
+        { id: 'seg', type: 'segment', parents: ['a', 'b'], params: {} },
+      ]),
+    );
+    // A tap on the vertex must select the vertex, or dragging a polygon's
+    // vertex would be impossible (the segment is equidistant there).
+    expect(hitTest(scene, { x: 0, y: 0 }, 0.5)[0]).toBe('a');
+    // Mid-segment stays reachable: no point is within tolerance there.
+    expect(hitTest(scene, { x: 2, y: 0 }, 0.5)).toEqual(['seg']);
   });
 });
 

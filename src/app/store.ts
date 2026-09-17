@@ -1,4 +1,4 @@
-import { computeScene, createEmptyDoc, hitTest, type Doc, type Id, type Scene, type Vec2, type Viewport } from '../engine';
+import { anchorsOf, computeScene, createEmptyDoc, hitTest, type Doc, type Id, type Scene, type Vec2, type Viewport } from '../engine';
 
 const HISTORY_LIMIT = 200;
 
@@ -107,9 +107,9 @@ export class Store {
     this.emit();
   }
 
-  /** Hit-test against the current scene; world-space tolerance. */
+  /** Hit-test against the current scene; world-space tolerance. Number readouts are hit via their anchors. */
   pick(world: Vec2, tolWorld: number): Id[] {
-    return hitTest(this.scene, world, tolWorld);
+    return hitTest(this.scene, world, tolWorld, anchorsOf(this.doc, this.scene));
   }
 
   /** Document content only — the viewport is deliberately excluded (see class docs). */

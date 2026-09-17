@@ -1,5 +1,16 @@
 import type { Store } from '../app/store';
-import { newId, type Doc, type Id, type Json, type ObjRecord, type Vec2, type Viewport } from '../engine';
+import {
+  isPathGeometry,
+  newId,
+  projectPoint,
+  type Doc,
+  type Id,
+  type Json,
+  type ObjRecord,
+  type Scene,
+  type Vec2,
+  type Viewport,
+} from '../engine';
 import { render } from '../render/canvas';
 import { ViewTransform, backingSize, panBy, zoomAt, type ScreenPoint } from '../render/viewport';
 
@@ -7,7 +18,7 @@ import { ViewTransform, backingSize, panBy, zoomAt, type ScreenPoint } from '../
 const TOUCH_TOLERANCE_PX = 10;
 const MOUSE_TOLERANCE_PX = 6;
 
-/** A press that neither moved nor lingered becomes a tap (creates a point). */
+/** A press that neither travelled nor lingered becomes a tap (see `isTap`). */
 const TAP_SLOP_PX = 4;
 const TAP_MS = 250;
 
@@ -17,15 +28,23 @@ const PINCH_WHEEL_SENSITIVITY = 0.01;
 /** Guards against a dropped frame turning into a huge pinch jump. */
 const MAX_PINCH_STEP = 2;
 
+/** How a grabbed object follows the pointer. */
+type DragGrip = { kind: 'xy'; offset: Vec2 } | { kind: 'path'; parentId: Id };
+
 interface PointerState {
   id: number;
+  /** `drag` grips an object, `pan` is empty-space travel, `dead` is a spent gesture. */
   kind: 'none' | 'drag' | 'pan' | 'dead';
   startCss: ScreenPoint;
   lastCss: ScreenPoint;
   startTime: number;
-  /** World offset from the pointer to the grabbed point, so the grip never jumps. */
-  grabOffset: Vec2;
-  dragId: Id | null;
+  /** Set once the press has travelled past the tap slop. */
+  moved: boolean;
+  /** The object under the press; `null` is empty space. */
+  hitId: Id | null;
+  /** Selection state of `hitId` at press time — a tap toggles exactly that. */
+  hitWasSelected: boolean;
+  grip: DragGrip | null;
 }
 
 /** A free point's parameters: `point.free` stores exactly `{x, y}` world units. */
@@ -35,6 +54,32 @@ function pointParams(rec: ObjRecord | undefined): Vec2 | null {
   const { x, y } = raw;
   if (typeof x !== 'number' || typeof y !== 'number') return null;
   return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+/** Read one finite numeric parameter, or `null` when it is missing or unusable. */
+function paramNumber(rec: ObjRecord, key: string): number | null {
+  const raw: Json | undefined = rec.params;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const value = raw[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * How a grabbed object can move, or `null` when it has no draggable parameters
+ * (segments, circles, polygons, readouts: selectable but not movable).
+ *
+ * Two shapes exist: a free point follows the pointer by `{x, y}`, a point glued
+ * to a path by its re-projected `{t}` parameter.
+ */
+function dragGrip(rec: ObjRecord, scene: Scene, world: Vec2): DragGrip | null {
+  if (paramNumber(rec, 't') !== null && rec.parents.length > 0) {
+    const parentId = rec.parents[0];
+    const path = scene.geoms.get(parentId);
+    if (path !== undefined && isPathGeometry(path)) return { kind: 'path', parentId };
+  }
+  const at = pointParams(rec);
+  if (at === null) return null;
+  return { kind: 'xy', offset: { x: at.x - world.x, y: at.y - world.y } };
 }
 
 function findObject(doc: Doc, id: Id): ObjRecord | undefined {
@@ -69,9 +114,16 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 /**
  * Wires pointer, wheel and keyboard input plus the render loop to a canvas
- * backed by `store`. Nothing here needs hover or a mode: press a point to drag
- * it, tap empty space to create one, drag empty space to pan, pinch or wheel to
- * zoom.
+ * backed by `store`. Nothing here needs hover or a mode, and nothing selects by
+ * dragging: the selection is built by taps and read by the action bar.
+ *
+ * Touch-first semantics (DESIGN §2 D6):
+ * - tap empty space → create a free point *and* add it to the selection, so
+ *   three taps plus one action button make a triangle;
+ * - tap an object → toggle it in the selection (append, else remove);
+ * - drag an object → grip it: the selection collapses onto it unless it was
+ *   already selected, and free points / points on a path follow the pointer;
+ * - drag empty space → pan; pinch, wheel → zoom; Escape clears the selection.
  */
 export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
   const pointers = new Map<number, PointerState>();
@@ -118,25 +170,37 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
     if (usable) store.setViewport(vp);
   }
 
-  function beginDrag(state: PointerState, id: Id): void {
-    const world = transform().toWorld(state.startCss);
-    const at = pointParams(findObject(store.doc, id));
-    store.setSelection([id]);
-    if (!at) {
-      state.kind = 'dead';
+  /** Move the gripped object so it follows the pointer. */
+  function dragTo(state: PointerState, world: Vec2): void {
+    const id = state.hitId;
+    const grip = state.grip;
+    if (id === null || grip === null) return;
+
+    if (grip.kind === 'xy') {
+      const offset = grip.offset;
+      store.mutate((doc) => {
+        const rec = findObject(doc, id);
+        if (rec !== undefined) rec.params = { x: world.x + offset.x, y: world.y + offset.y };
+      });
       return;
     }
-    state.kind = 'drag';
-    state.dragId = id;
-    state.grabOffset = { x: at.x - world.x, y: at.y - world.y };
-    store.begin();
+
+    // Re-project onto the path as it is *now* (the parent may itself have moved
+    // during this gesture), and store the parameter — never a position.
+    const path = store.scene.geoms.get(grip.parentId);
+    if (path === undefined || !isPathGeometry(path)) return;
+    const t = projectPoint(path, world);
+    store.mutate((doc) => {
+      const rec = findObject(doc, id);
+      if (rec !== undefined) rec.params = { t };
+    });
   }
 
   /** A second finger turns the gesture into a pinch; any drag in flight is settled first. */
   function beginPinch(): void {
     const [a, b] = [...pointers.values()];
     for (const state of pointers.values()) {
-      if (state.kind === 'drag') store.commit();
+      if (state.grip !== null) store.commit();
       state.kind = 'dead';
     }
     pinch = { dist: Math.hypot(a.lastCss.x - b.lastCss.x, a.lastCss.y - b.lastCss.y), mid: midpoint(a.lastCss, b.lastCss) };
@@ -154,8 +218,10 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
       startCss: css,
       lastCss: css,
       startTime: performance.now(),
-      grabOffset: { x: 0, y: 0 },
-      dragId: null,
+      moved: false,
+      hitId: null,
+      hitWasSelected: false,
+      grip: null,
     };
     pointers.set(e.pointerId, state);
 
@@ -164,18 +230,42 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
       return;
     }
 
+    const world = transform().toWorld(css);
     const hit = store.pick(
-      transform().toWorld(css),
+      world,
       tolerancePx(e.pointerType) / store.doc.viewport.scale,
     )[0];
-    if (hit === undefined) state.kind = 'pan';
-    else beginDrag(state, hit);
+    const rec = hit === undefined ? undefined : findObject(store.doc, hit);
+    if (hit === undefined || rec === undefined) {
+      state.kind = 'pan';
+      return;
+    }
+
+    // Pressing an object opens a gesture that is either a grip (once it moves)
+    // or a selection toggle (if it is released without moving). The selection is
+    // deliberately left alone here, so a tap can append to it.
+    state.kind = 'drag';
+    state.hitId = hit;
+    state.hitWasSelected = store.selection.has(hit);
+    const grip = dragGrip(rec, store.scene, world);
+    if (grip === null) return; // selectable, but nothing to move
+    state.grip = grip;
+    store.begin();
   }
 
   function onPointerMove(e: PointerEvent): void {
     const state = pointers.get(e.pointerId);
     if (!state) return;
     const css = eventCss(e);
+
+    if (!state.moved && Math.hypot(css.x - state.startCss.x, css.y - state.startCss.y) > TAP_SLOP_PX) {
+      state.moved = true;
+      // The grip owns the selection; a multi-selection survives only when the
+      // grabbed object was already part of it.
+      if (state.kind === 'drag' && state.hitId !== null && !state.hitWasSelected) {
+        store.setSelection([state.hitId]);
+      }
+    }
 
     if (pinch && pointers.size === 2) {
       state.lastCss = css;
@@ -189,17 +279,8 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
       return;
     }
 
-    if (state.kind === 'drag' && state.dragId !== null) {
-      const world = transform().toWorld(css);
-      const id = state.dragId;
-      const grab = state.grabOffset;
-      // Absolute from the grab offset, never a snap: the point keeps the grip
-      // even when the finger landed slightly off its centre.
-      store.mutate((doc) => {
-        const rec = findObject(doc, id);
-        if (!rec) return;
-        rec.params = { x: world.x + grab.x, y: world.y + grab.y };
-      });
+    if (state.kind === 'drag') {
+      dragTo(state, transform().toWorld(css));
       state.lastCss = css;
     }
   }
@@ -223,10 +304,11 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
     pointers.delete(e.pointerId);
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
 
-    if (state.kind === 'drag') {
-      store.commit();
-    } else if (e.type === 'pointerup' && pointers.size === 0 && isTap(state)) {
-      createPointAt(state.startCss);
+    if (state.kind === 'drag' && state.grip !== null) store.commit();
+
+    if (e.type === 'pointerup' && pointers.size === 0 && isTap(state)) {
+      if (state.hitId === null) createPointAt(state.startCss);
+      else toggleSelection(state.hitId);
     }
 
     // Any surviving finger starts a fresh gesture rather than a jumpy half-pinch.
@@ -236,23 +318,35 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
 
   function isTap(state: PointerState): boolean {
     return (
-      state.kind === 'pan' &&
-      performance.now() - state.startTime <= TAP_MS &&
-      Math.hypot(state.startCss.x - state.lastCss.x, state.startCss.y - state.lastCss.y) <= TAP_SLOP_PX
+      (state.kind === 'pan' || state.kind === 'drag') &&
+      !state.moved &&
+      performance.now() - state.startTime <= TAP_MS
     );
+  }
+
+  /** Toggle an object in the selection; the set remembers click order. */
+  function toggleSelection(id: Id): void {
+    const next = new Set(store.selection);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    store.setSelection([...next]);
   }
 
   function createPointAt(css: ScreenPoint): void {
     const world = transform().toWorld(css);
+    const id = newId();
     store.edit((doc) => {
       doc.objects.push({
-        id: newId(),
+        id,
         type: 'point.free',
         parents: [],
         params: { x: world.x, y: world.y },
         label: { text: nextLabel(doc) },
       });
     });
+    // The fresh point joins the selection, so a run of taps can be turned into a
+    // construction with one action.
+    store.setSelection([...store.selection, id]);
   }
 
   function onWheel(e: WheelEvent): void {
@@ -281,7 +375,8 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
     const doomed = new Set(store.selection);
     if (doomed.size === 0) return;
     e.preventDefault();
-    // M0 has no dependents, so a selected object is removed on its own.
+    // M1 has no dependents yet, so a selected object is removed on its own;
+    // cascade deletion arrives with the dependency graph.
     store.edit((doc) => {
       doc.objects = doc.objects.filter((o) => !doomed.has(o.id));
     });

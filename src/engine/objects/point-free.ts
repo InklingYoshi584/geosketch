@@ -18,7 +18,8 @@ function readNumber(params: Json, key: 'x' | 'y'): number | undefined {
 
 registerType({
   name: 'point.free',
-  parentTypes: [[]],
+  title: '自由点',
+  parentKinds: [[]],
   compute(_parents: Geometry[], params: Json, _env: Env): Geometry | Undefined {
     const x = readNumber(params, 'x');
     if (x === undefined) return { reason: 'bad params: x must be a finite number' };

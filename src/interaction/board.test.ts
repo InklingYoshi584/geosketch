@@ -227,6 +227,17 @@ describe('segment tool', () => {
     expect(board.store.doc.objects[2].parents).toEqual(['a', 'b']);
   });
 
+  it('glues an endpoint to the path it lands on', () => {
+    const board = attach([freePoint('a', 0, 0), freePoint('b', 4, 0), segment('s', ['a', 'b'])]);
+    board.store.setTool('segment');
+    board.tap(1, 0);
+    const glued = board.store.doc.objects[3];
+    expect(glued.type).toBe('point.onObject');
+    expect(glued.parents).toEqual(['s']);
+    expect(glued.params).toEqual({ t: 0.25 });
+    expect(board.handle.pendingCount()).toBe(1);
+  });
+
   it('abandons the first click on Escape, and clears the selection next', () => {
     const board = attach();
     board.store.setTool('segment');

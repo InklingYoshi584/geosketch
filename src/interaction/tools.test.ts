@@ -219,7 +219,7 @@ describe('two-point constructions', () => {
 
     const second = tap(board, 6, 6);
     expect(types(second.created)).toEqual(['point.free', 'segment']);
-    expect(record(board, 'segment').parents).toEqual([first.created[0].id, second.created[0].id]);
+    expect(second.created[1].parents).toEqual([first.created[0].id, second.created[0].id]);
   });
 });
 

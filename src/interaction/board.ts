@@ -1,7 +1,6 @@
 import type { Store } from '../app/store';
 import {
   isPathGeometry,
-  newId,
   projectPoint,
   type Doc,
   type Id,
@@ -13,6 +12,17 @@ import {
 } from '../engine';
 import { render } from '../render/canvas';
 import { ViewTransform, backingSize, panBy, zoomAt, type ScreenPoint } from '../render/viewport';
+// The delete tool shares the inspector's cascade-with-preview path, so the
+// dependents listed in the confirm and the atomic edit exist in one place (D10).
+import { deleteWithPreview } from '../ui/inspector';
+import {
+  emptyPending,
+  finishPending,
+  pendingCount,
+  reduceClick,
+  type PendingState,
+  type Reduction,
+} from './tools';
 
 /** Finger/pen targets are fatter than mouse targets (DESIGN §3: touch & whiteboard). */
 const TOUCH_TOLERANCE_PX = 10;
@@ -86,22 +96,6 @@ function findObject(doc: Doc, id: Id): ObjRecord | undefined {
   return doc.objects.find((o) => o.id === id);
 }
 
-/** A…Z, then A1, B1, … — the labels a geometry teacher expects. */
-function labelAt(index: number): string {
-  const letter = String.fromCharCode(65 + (index % 26));
-  return index < 26 ? letter : `${letter}${Math.floor(index / 26)}`;
-}
-
-function nextLabel(doc: Doc): string {
-  const used = new Set<string>();
-  for (const o of doc.objects) {
-    if (o.label?.text) used.add(o.label.text);
-  }
-  let i = 0;
-  while (used.has(labelAt(i))) i += 1;
-  return labelAt(i);
-}
-
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return (
@@ -112,22 +106,40 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+/** What the palette or a status line can ask the attached board. */
+export interface BoardHandle {
+  /** Clicks the active tool is holding (0 when it is waiting for nothing). */
+  pendingCount(): number;
+}
+
 /**
  * Wires pointer, wheel and keyboard input plus the render loop to a canvas
- * backed by `store`. Nothing here needs hover or a mode, and nothing selects by
- * dragging: the selection is built by taps and read by the action bar.
+ * backed by `store`. Nothing here needs hover, and nothing selects by dragging:
+ * a tap is the whole vocabulary.
  *
- * Touch-first semantics (DESIGN §2 D6):
- * - tap empty space → create a free point *and* add it to the selection, so
- *   three taps plus one action button make a triangle;
- * - tap an object → toggle it in the selection (append, else remove);
- * - drag an object → grip it: the selection collapses onto it unless it was
- *   already selected, and free points / points on a path follow the pointer;
- * - drag empty space → pan; pinch, wheel → zoom; Escape clears the selection.
+ * The active tool decides what a tap *means* (`./tools.ts`); the board is what
+ * applies it — pushes the records through one `store.edit`, sets the selection
+ * and, for the delete tool, runs the cascade-with-preview. Keeping the reducer
+ * out of the DOM is what lets every tool be tested as a click sequence.
+ *
+ * Touch-first semantics (DESIGN §2 D6, revised for the tool palette):
+ * - `select` (the default): tap an object → toggle it in the selection; tap
+ *   empty space → clear the selection;
+ * - any other tool: tap → the tool's next click (a free or glued point, a
+ *   construction, a measurement, a delete), each creation its own undo entry;
+ * - drag an object → grip it, whatever the tool: the selection collapses onto it
+ *   unless it was already selected, and free points / points on a path follow
+ *   the pointer;
+ * - drag empty space → pan; pinch, wheel → zoom;
+ * - Escape abandons the clicks a tool is holding, else clears the selection;
+ *   Enter closes a pending polygon.
  */
-export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
+export function attachBoard(canvas: HTMLCanvasElement, store: Store): BoardHandle {
   const pointers = new Map<number, PointerState>();
   let pinch: { dist: number; mid: ScreenPoint } | null = null;
+
+  /** The clicks the active tool is holding; reset whenever the tool changes. */
+  let pending: PendingState = emptyPending(store.tool);
 
   let cssWidth = 1;
   let cssHeight = 1;
@@ -307,8 +319,14 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
     if (state.kind === 'drag' && state.grip !== null) store.commit();
 
     if (e.type === 'pointerup' && pointers.size === 0 && isTap(state)) {
-      if (state.hitId === null) createPointAt(state.startCss);
-      else toggleSelection(state.hitId);
+      if (store.tool === 'select') {
+        // A tap on empty space only clears: points come from the palette's
+        // point tool now, never from a stray tap.
+        if (state.hitId === null) store.setSelection([]);
+        else toggleSelection(state.hitId);
+      } else {
+        applyToolTap(state, e.pointerType);
+      }
     }
 
     // Any surviving finger starts a fresh gesture rather than a jumpy half-pinch.
@@ -332,21 +350,35 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
     store.setSelection([...next]);
   }
 
-  function createPointAt(css: ScreenPoint): void {
-    const world = transform().toWorld(css);
-    const id = newId();
-    store.edit((doc) => {
-      doc.objects.push({
-        id,
-        type: 'point.free',
-        parents: [],
-        params: { x: world.x, y: world.y },
-        label: { text: nextLabel(doc) },
+  /**
+   * Apply what the reducer decided: the new records are their own undo entry
+   * (GSP's "the clicked point is real immediately"), the selection follows the
+   * click, and a delete goes through the inspector's cascade-with-preview.
+   */
+  function applyReduction(result: Reduction): void {
+    pending = result.next;
+    if (result.remove !== undefined) {
+      deleteWithPreview(store, result.remove);
+      return;
+    }
+    if (result.created.length > 0) {
+      store.edit((doc) => {
+        doc.objects.push(...result.created);
       });
-    });
-    // The fresh point joins the selection, so a run of taps can be turned into a
-    // construction with one action.
-    store.setSelection([...store.selection, id]);
+    }
+    if (result.select !== undefined) store.setSelection(result.select);
+  }
+
+  /** Hand a tap to the active tool: the press position, and what is under it. */
+  function applyToolTap(state: PointerState, pointerType: string): void {
+    const world = transform().toWorld(state.startCss);
+    const tolWorld = tolerancePx(pointerType) / store.doc.viewport.scale;
+    applyReduction(
+      reduceClick(
+        { doc: store.doc, scene: store.scene, world, hits: store.pick(world, tolWorld) },
+        pending,
+      ),
+    );
   }
 
   function onWheel(e: WheelEvent): void {
@@ -368,15 +400,30 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
   function onKeyDown(e: KeyboardEvent): void {
     if (isTypingTarget(e.target)) return;
     if (e.key === 'Escape') {
+      // Escape abandons the clicks a tool is holding; with nothing pending it
+      // clears the selection, as it always did.
+      if (pendingCount(pending) > 0) {
+        pending = emptyPending(pending.tool);
+        return;
+      }
       store.setSelection([]);
+      return;
+    }
+    if (e.key === 'Enter') {
+      const result = finishPending(pending);
+      // Still the same pending state means no tool has a finish gesture here.
+      if (result.next === pending && result.created.length === 0) return;
+      e.preventDefault();
+      applyReduction(result);
       return;
     }
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
     const doomed = new Set(store.selection);
     if (doomed.size === 0) return;
     e.preventDefault();
-    // M1 has no dependents yet, so a selected object is removed on its own;
-    // cascade deletion arrives with the dependency graph.
+    // Deliberately single-object: the cascade-with-preview lives where the
+    // teacher can see what is about to go (the inspector's 删除 button and the
+    // palette's delete tool), not behind a stray Backspace.
     store.edit((doc) => {
       doc.objects = doc.objects.filter((o) => !doomed.has(o.id));
     });
@@ -393,8 +440,15 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): void {
 
   new ResizeObserver(syncSize).observe(canvas);
 
-  store.subscribe(requestRender);
+  store.subscribe(() => {
+    // A tool switch abandons the clicks the previous tool was holding: the
+    // palette changes tools only through `store.setTool`.
+    if (pending.tool !== store.tool) pending = emptyPending(store.tool);
+    requestRender();
+  });
   syncSize();
+
+  return { pendingCount: () => pendingCount(pending) };
 }
 
 function tolerancePx(pointerType: string): number {

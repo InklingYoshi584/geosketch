@@ -32,7 +32,8 @@ deliberate choices from accidents.
 | D3 | Platform | Web app; runs whiteboard browser / Windows / macOS / student devices |
 | D4 | Stack | TypeScript (strict) + Vite + Canvas 2D; **no UI framework** |
 | D5 | Hosting | Public repo, MIT, GitHub Pages; offline-capable PWA |
-| D6 | Interaction | Fresh design: **selection-first + contextual actions** (no mode palette) |
+| D6 | Interaction | **GSP-style persistent tool palette** — pick a tool, then click the canvas (revised 2026-09-17 after real use: the selection-first-only design proved undiscoverable in a teacher's hands). Selection-first contextual actions survive as a *secondary* path: the action bar shows only while 选择 is active. |
+| D6b | Tool semantics | Tools create objects immediately as you click (a clicked point is a real object at once, as in GSP); clicking an existing point reuses it instead of stacking a duplicate; the tool stays active for repeated drawing; Esc cancels a pending construction |
 | D7 | Assist layer | Freehand "auto-geometrize" — post-v1 assist, never the core |
 | D8 | Semantics | Dynamic geometry DAG: objects defined by parents; dragging recomputes |
 | D9 | Degeneracy | Undefined ⇒ hidden + "undefined" indicator chip (tap to explain); auto-return; branch-continuity preserved |
@@ -266,12 +267,34 @@ order is click order. `Action.apply()` returns `{created, select}`; the UI appli
 through `store.edit` (one undo entry), and the created objects become the selection
 so constructions chain.
 
-Selection semantics (touch-first): tap empty space creates a free point **and appends
-it to the selection** (three taps + one button = triangle); tap an object toggles it in
-the selection; drag selects and moves (free points by `{x,y}`, glued points by
-re-projecting `{t}`); non-path objects are selectable but not draggable; ✕ / Escape
-clears. `Delete` deletes with cascade **preview** (D10); `Detach` freezes a dependent
-point as `point.free` at its current position.
+Selection semantics (`select` tool, touch-first): tap an object toggles it in the
+selection; a tap on empty space clears the selection (it no longer creates a point —
+free points come from the 点 tool, see §5.2); drag selects and moves (free points by
+`{x,y}`, glued points by re-projecting `{t}`); non-path objects are selectable but not
+draggable; ✕ / Escape clears. `Delete` deletes with cascade **preview** (D10); `Detach`
+freezes a dependent point as `point.free` at its current position.
+
+### 5.2 Tool palette (M1.1 — D6 revised after real use)
+
+A persistent strip under the chrome bar; pick a tool, then click the canvas. Order and
+digit shortcuts (1–9, 0): 选择, 点, 线段, 直线, 射线, 圆, 多边形, 中点, 垂线, 平行线,
+交点, 距离, 角度, 面积, 删除. Pressing the active tool (or its digit) returns to 选择.
+The strip renders purely from `store.tool`; the selection-driven action bar is shown
+only while 选择 is active.
+
+Click semantics: each click that creates an object is its own `store.edit` (per-click
+undo — in GSP a clicked point is immediately real); clicking an existing point reuses
+it instead of stacking a duplicate; **clicking a path glues** a `point.onObject`
+(`t = projectPoint`, matching the 点 tool — this is what keeps a figure consistent when
+its parents are dragged later). Multi-click tools: 线段/直线/射线/圆 collect two points;
+多边形 collects ≥3 and finishes when the first vertex is clicked again (Enter also
+finishes); 垂线/平行线 take a point and a path in either order; 交点 takes two paths;
+距离 two points (or one segment, thanks to the multi-signature engine form); 角度 three
+points with the vertex in the middle; 面积 one polygon or circle; 删除 reuses the
+inspector's cascade-with-preview. Esc cancels pending clicks; `store.setTool` resets
+pending state. The 删除 tool calls `deleteWithPreview` from `src/ui/inspector.ts` — an
+acyclic interaction→ui edge accepted to keep one cascade path; hoist it to `app/` if a
+third consumer ever appears.
 
 Undefined objects (D9) are unhittable, hide with their dependents, and are listed by
 the chip with their reason (`无交点`, `两直线平行`, `半径为零`, `退化`, `圆没有平行线`, …).

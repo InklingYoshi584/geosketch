@@ -3,13 +3,34 @@ import { anchorsOf, computeScene, createEmptyDoc, hitTest, type Doc, type Id, ty
 const HISTORY_LIMIT = 200;
 
 /**
- * Application spine: owns the document, its computed scene, the selection, and
- * snapshot-based undo/redo.
+ * The active drawing tool (GSP-style persistent palette, D6 revised): the
+ * palette is the primary way to create objects; the selection-based action bar
+ * remains as a secondary path and is only shown while `select` is active.
+ */
+export type Tool =
+  | 'select'
+  | 'point'
+  | 'segment'
+  | 'line'
+  | 'ray'
+  | 'circle'
+  | 'polygon'
+  | 'midpoint'
+  | 'perpendicular'
+  | 'parallel'
+  | 'intersection'
+  | 'measure.distance'
+  | 'measure.angle'
+  | 'measure.area'
+  | 'delete';
+
+/**
+ * Application spine: owns the document, its computed scene, the selection, the
+ * active tool, and snapshot-based undo/redo.
  *
  * Undo snapshots cover the *document content* (version, axes, objects) — never
- * the viewport. Panning/zooming is navigation: it is not undoable, and undoing
- * an edit must not yank the camera back to wherever it was when the edit
- * happened. The live viewport survives undo/redo untouched.
+ * the viewport and never the tool. Panning/zooming is navigation and the tool
+ * is session state: undoing an edit must not change either.
  *
  * Transaction pattern for continuous gestures (e.g. dragging a point):
  *   store.begin(); store.mutate(d => ...); store.mutate(d => ...); store.commit();
@@ -19,6 +40,8 @@ export class Store {
   doc: Doc;
   scene: Scene;
   selection = new Set<Id>();
+  /** Active palette tool; session state — never part of the document or undo. */
+  tool: Tool = 'select';
   private readonly listeners = new Set<() => void>();
   private readonly undoStack: string[] = [];
   private readonly redoStack: string[] = [];
@@ -99,6 +122,12 @@ export class Store {
 
   setSelection(ids: Id[]): void {
     this.selection = new Set(ids);
+    this.emit();
+  }
+
+  setTool(tool: Tool): void {
+    if (this.tool === tool) return;
+    this.tool = tool;
     this.emit();
   }
 

@@ -81,6 +81,17 @@ body {
   font-size: 13px;
 }
 
+#tools {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fcfcfd;
+}
+
 #board {
   flex: 1 1 auto;
   display: block;

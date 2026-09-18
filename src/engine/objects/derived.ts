@@ -52,18 +52,38 @@ function asPoints(parents: Geometry[], n: number): Vec2[] | undefined {
   return points;
 }
 
+/** The point halfway between two positions — the one formula both signatures share. */
+function midpointOf(a: Vec2, b: Vec2): Vec2 {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
 registerType({
   name: 'midpoint',
   title: '中点',
-  parentKinds: [['point', 'point']],
+  // Two accepted signatures of different arities (registry.ts `parentKinds`
+  // lists one entry per legal signature): the two-point form chains a
+  // construction, the one-segment form is the classroom gesture — tap a side
+  // and get its midpoint. The two-point form stays first so `midpoint:0` keeps
+  // its meaning for the action layer.
+  parentKinds: [['point', 'point'], ['segment']],
   compute(parents: Geometry[], _params: Json, _env: Env): Geometry | Undefined {
+    // One parent: only a segment defines a midpoint by itself. Dispatch on the
+    // arity first, then on the kind, so the two signatures never blur into a
+    // "one or two" rule.
+    if (parents.length === 1) {
+      const parent = parents[0];
+      if (parent.kind !== 'segment') return { reason: 'bad parents: expected two points or a segment' };
+      const a = parent.a;
+      const b = parent.b;
+      if (!finite(a) || !finite(b)) return { reason: '非有限坐标' };
+      return { kind: 'point', at: midpointOf(a, b) };
+    }
     const points = asPoints(parents, 2);
     if (!points) return { reason: 'bad parents: expected two points' };
     if (!points.every(finite)) return { reason: '非有限坐标' };
-    const a = points[0];
-    const b = points[1];
-    // Two coincident points still have a midpoint — themselves.
-    return { kind: 'point', at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+    // Two coincident points still have a midpoint — themselves, and likewise
+    // the two endpoints of a zero-length segment.
+    return { kind: 'point', at: midpointOf(points[0], points[1]) };
   },
 });
 

@@ -14,6 +14,11 @@ import './actions.css';
  * A press builds its objects and pushes them in one `store.edit`, so one press
  * is one undo entry; the created objects become the selection, which is what
  * makes constructions chain (两点 → 线段 → 中点 → …).
+ *
+ * The bar is only visible while the `select` tool is active: since the palette
+ * landed, picking built objects from a selection is the *second* way to build,
+ * and the first one (pick a tool, click the canvas) does not want a row of
+ * buttons under the finger it is about to use.
  */
 export function attachActionBar(el: HTMLElement, store: Store): void {
   const live = createLiveGate();
@@ -21,10 +26,13 @@ export function attachActionBar(el: HTMLElement, store: Store): void {
     // A Set iterates in insertion order, which is click order — the order the
     // engine reads parents in.
     const selection = [...store.selection];
-    const actions = selection.length === 0 ? [] : actionsFor(store.doc, store.scene, selection);
-    const key = `${selection.join('|')}#${actions.map((action) => `${action.id}:${action.title}`).join('|')}`;
+    // The bar is the secondary path (D6 revised): it belongs to the select tool
+    // alone, and a palette tool hides it until the teacher goes back to select.
+    const shown = store.tool === 'select' && selection.length > 0;
+    const actions = shown ? actionsFor(store.doc, store.scene, selection) : [];
+    const key = `${store.tool}#${selection.join('|')}#${actions.map((action) => `${action.id}:${action.title}`).join('|')}`;
     live(key, () => {
-      if (selection.length === 0) {
+      if (!shown) {
         el.replaceChildren();
         el.hidden = true;
         return;

@@ -108,7 +108,10 @@ function expectDeterministic(name: string, parents: Geometry[]): void {
 describe('midpoint', () => {
   it('is registered with the title and parent kinds the action bar reads', () => {
     expect(registry.get('midpoint')?.title).toBe('中点');
-    expect(registry.get('midpoint')?.parentKinds).toEqual([['point', 'point']]);
+    // One entry per legal signature, the two-point form first: the palette and
+    // the tool reducer both address `midpoint:0` as the two-point construction,
+    // and the one-segment form is the additional signature `midpoint:1`.
+    expect(registry.get('midpoint')?.parentKinds).toEqual([['point', 'point'], ['segment']]);
   });
 
   it('is exactly halfway between its parents', () => {
@@ -137,8 +140,64 @@ describe('midpoint', () => {
   });
 
   it('refuses anything that is not two points', () => {
-    expect(reasonOf('midpoint', [P(0, 0)])).toMatch(/bad parents/);
     expect(reasonOf('midpoint', [P(0, 0), segment(0, 0, 1, 1)])).toMatch(/bad parents/);
+    // Arity is strict, never a subsequence: a segment among two parents is not
+    // the one-segment signature, and an empty selection is nothing at all.
+    expect(reasonOf('midpoint', [segment(0, 0, 1, 1), P(2, 2)])).toBe('bad parents: expected two points');
+    expect(reasonOf('midpoint', [segment(0, 0, 1, 1), segment(2, 2, 3, 3)])).toBe(
+      'bad parents: expected two points',
+    );
+    expect(reasonOf('midpoint', [])).toBe('bad parents: expected two points');
+  });
+
+  it('takes a single segment and returns the midpoint of its endpoints', () => {
+    expect(atOf(defined('midpoint', [segment(0, 0, 4, 2)]))).toEqual({ x: 2, y: 1 });
+    expect(atOf(defined('midpoint', [segment(-3, 7, 3, -7)]))).toEqual({ x: 0, y: 0 });
+    // Either endpoint order gives the same point.
+    expect(atOf(defined('midpoint', [segment(6, -1, -2, 5)]))).toEqual(
+      atOf(defined('midpoint', [segment(-2, 5, 6, -1)])),
+    );
+  });
+
+  it('agrees with the two-point form over a seeded sweep of segments', () => {
+    const values = seededValues(20260918, 800);
+    for (let i = 0; i + 3 < values.length; i += 4) {
+      const a = V(values[i], values[i + 1]);
+      const b = V(values[i + 2], values[i + 3]);
+      const bySegment = atOf(defined('midpoint', [segment(a.x, a.y, b.x, b.y)]));
+      expect(bySegment).toEqual(atOf(defined('midpoint', [P(a.x, a.y), P(b.x, b.y)])));
+      expect(Math.abs(dist(bySegment, a) - dist(bySegment, b))).toBeLessThan(1e-12);
+      expect(dist(a, bySegment)).toBeCloseTo(dist(a, b) / 2, 9);
+    }
+  });
+
+  it('keeps a zero-length segment defined, at that same point', () => {
+    expect(atOf(defined('midpoint', [segment(2, -5, 2, -5)]))).toEqual({ x: 2, y: -5 });
+  });
+
+  it('is deterministic for a segment parent', () => {
+    expectDeterministic('midpoint', [segment(-1, 4, 7, -2)]);
+  });
+
+  it('refuses a lone parent that is not a segment', () => {
+    // The one-parent signature is segments only: there is no centre-of-a-circle
+    // tool, so a circle is refused rather than reinterpreted as its centre.
+    const refused: Geometry[] = [
+      P(0, 0),
+      line(0, 0, 1, 1),
+      ray(0, 0, 1, 1),
+      circle(0, 0, 2),
+      { kind: 'polygon', points: [V(0, 0), V(1, 0), V(0, 1)] },
+    ];
+    for (const parent of refused) {
+      expect(reasonOf('midpoint', [parent])).toBe('bad parents: expected two points or a segment');
+    }
+  });
+
+  it('reports non-finite coordinates for both signatures', () => {
+    expect(reasonOf('midpoint', [P(Number.NaN, 0), P(1, 1)])).toBe('非有限坐标');
+    expect(reasonOf('midpoint', [segment(Number.NaN, 0, 1, 1)])).toBe('非有限坐标');
+    expect(reasonOf('midpoint', [segment(0, 0, Number.POSITIVE_INFINITY, 1)])).toBe('非有限坐标');
   });
 });
 

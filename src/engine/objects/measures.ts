@@ -38,9 +38,21 @@ function asPoints(parents: Geometry[], n: number): Vec2[] | undefined {
 registerType({
   name: 'measure.distance',
   title: '距离',
-  parentKinds: [['point', 'point']],
-  /** |AB| in world units. Two coincident points measure 0, which is a legitimate distance. */
+  // Two accepted signatures of different arities: two points, or one segment
+  // whose length is the distance (the first is the general form, so
+  // `measure.distance:0` keeps its meaning for the action layer).
+  parentKinds: [['point', 'point'], ['segment']],
+  /**
+   * |AB| in world units. Two coincident points measure 0, which is a
+   * legitimate distance — and so does a zero-length segment.
+   */
   compute(parents: Geometry[], _params: Json, _env: Env): Geometry | Undefined {
+    if (parents.length === 1) {
+      const parent = parents[0];
+      if (parent.kind !== 'segment') return { reason: 'bad parents: expected two points or a segment' };
+      if (!finite(parent.a) || !finite(parent.b)) return { reason: '非有限坐标' };
+      return { kind: 'number', value: dist(parent.a, parent.b) };
+    }
     const points = asPoints(parents, 2);
     if (!points) return { reason: 'bad parents: expected two points' };
     if (!points.every(finite)) return { reason: '非有限坐标' };

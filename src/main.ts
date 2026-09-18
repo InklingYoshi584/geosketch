@@ -5,6 +5,8 @@ import { autosaveClear, autosaveLoad, autosaveSave, openDocFile, saveDocFile } f
 import { attachActionBar } from './ui/actions';
 import { attachChip } from './ui/chip';
 import { attachInspector } from './ui/inspector';
+import { attachToolbar } from './ui/toolbar';
+import { toolHint } from './ui/labels';
 
 function el<T extends HTMLElement>(sel: string): T {
   const node = document.querySelector<T>(sel);
@@ -35,10 +37,9 @@ function refreshChrome(): void {
   btnRedo.disabled = !store.canRedo();
   const count = store.doc.objects.length;
   const selected = store.selection.size;
+  const hint = store.tool === 'select' ? '点选对象，拖动可移动' : toolHint(store.tool);
   status.textContent =
-    selected > 0
-      ? `${count} 个对象 · 已选 ${selected}`
-      : `${count} 个对象 · 轻点空白处放点，点选对象后可构造`;
+    selected > 0 ? `${count} 个对象 · 已选 ${selected}` : `${count} 个对象 · ${hint}`;
 }
 
 store.subscribe(() => {
@@ -51,6 +52,7 @@ store.subscribe(() => {
 });
 
 attachBoard(board, store);
+attachToolbar(el<HTMLElement>('#tools'), store);
 attachActionBar(el<HTMLElement>('#actionbar'), store);
 attachChip(el<HTMLElement>('#chip'), store);
 attachInspector(el<HTMLElement>('#sheet'), store);

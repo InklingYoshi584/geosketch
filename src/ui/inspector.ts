@@ -99,17 +99,28 @@ function deleteButton(store: Store, rec: ObjRecord): HTMLButtonElement {
   button.type = 'button';
   button.className = 'sheet-btn danger';
   button.textContent = '删除';
-  button.addEventListener('click', () => {
-    const doomed = [rec.id, ...cascadeIds(store.doc, rec.id)];
-    if (!window.confirm(deletePreview(store.doc, rec, doomed))) return;
-    const dead = new Set(doomed);
-    // One edit for the whole cascade: undo restores the figure atomically (D10).
-    store.edit((doc) => {
-      doc.objects = doc.objects.filter((object) => !dead.has(object.id));
-    });
-    store.setSelection([...store.selection].filter((id) => !dead.has(id)));
-  });
+  button.addEventListener('click', () => deleteWithPreview(store, rec.id));
   return button;
+}
+
+/**
+ * Cascade-delete an object after a `confirm()` that lists everything the delete
+ * takes with it (D10), then drop the casualties from the selection. One edit
+ * for the whole cascade, so undo restores the figure atomically.
+ *
+ * Exported because the palette's 删除 tool means the same thing as the sheet's
+ * button: the teacher clicks a doomed object and is told what it costs.
+ */
+export function deleteWithPreview(store: Store, root: Id): void {
+  const rec = store.doc.objects.find((object) => object.id === root);
+  if (rec === undefined) return;
+  const doomed = [root, ...cascadeIds(store.doc, root)];
+  if (!window.confirm(deletePreview(store.doc, rec, doomed))) return;
+  const dead = new Set(doomed);
+  store.edit((doc) => {
+    doc.objects = doc.objects.filter((object) => !dead.has(object.id));
+  });
+  store.setSelection([...store.selection].filter((id) => !dead.has(id)));
 }
 
 function deletePreview(doc: Doc, rec: ObjRecord, doomed: Id[]): string {

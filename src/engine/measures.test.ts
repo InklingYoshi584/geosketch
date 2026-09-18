@@ -22,6 +22,11 @@ const ENV: Env = { scale: 64 };
 
 const V = (x: number, y: number): Vec2 => ({ x, y });
 const P = (x: number, y: number): Geometry => ({ kind: 'point', at: V(x, y) });
+const segment = (ax: number, ay: number, bx: number, by: number): Geometry => ({
+  kind: 'segment',
+  a: V(ax, ay),
+  b: V(bx, by),
+});
 const polygon = (points: Vec2[]): Geometry => ({ kind: 'polygon', points });
 
 /** Deterministic uniform values in [-5, 5] (a 32-bit LCG). */
@@ -73,7 +78,11 @@ function expectDeterministic(name: string, parents: Geometry[]): void {
 describe('measure.distance', () => {
   it('is registered with the title and parent kinds the action bar reads', () => {
     expect(registry.get('measure.distance')?.title).toBe('距离');
-    expect(registry.get('measure.distance')?.parentKinds).toEqual([['point', 'point']]);
+    // One entry per legal signature, the two-point form first: the palette and
+    // the tool reducer both address `measure.distance:0` as the two-point
+    // readout, and the one-segment form is the additional signature
+    // `measure.distance:1`.
+    expect(registry.get('measure.distance')?.parentKinds).toEqual([['point', 'point'], ['segment']]);
   });
 
   it('measures |AB| in world units', () => {
@@ -102,8 +111,53 @@ describe('measure.distance', () => {
     ).toMatch(/bad parents/);
   });
 
+  it('measures a single segment as the distance between its endpoints', () => {
+    expect(numberOf(defined('measure.distance', [segment(0, 0, 3, 4)]))).toBe(5);
+    expect(numberOf(defined('measure.distance', [segment(2, -1, 2, -1)]))).toBe(0);
+    expect(unitOf(defined('measure.distance', [segment(0, 0, 1, 0)]))).toBeUndefined();
+    // Either endpoint order measures the same length.
+    expect(numberOf(defined('measure.distance', [segment(6, -1, -2, 5)]))).toBe(
+      numberOf(defined('measure.distance', [segment(-2, 5, 6, -1)])),
+    );
+  });
+
+  it('agrees with the two-point form over a seeded sweep of segments', () => {
+    const values = seededValues(20260918, 800);
+    for (let i = 0; i + 3 < values.length; i += 4) {
+      const a = V(values[i], values[i + 1]);
+      const b = V(values[i + 2], values[i + 3]);
+      const bySegment = numberOf(defined('measure.distance', [segment(a.x, a.y, b.x, b.y)]));
+      expect(bySegment).toBeCloseTo(numberOf(defined('measure.distance', [P(a.x, a.y), P(b.x, b.y)])), 12);
+      expect(bySegment).toBeCloseTo(dist(a, b), 9);
+    }
+  });
+
+  it('refuses a lone parent that is not a segment, and any other arity', () => {
+    const refused: Geometry[] = [
+      P(0, 0),
+      { kind: 'line', at: V(0, 0), dir: V(1, 0) },
+      { kind: 'ray', at: V(0, 0), dir: V(1, 0) },
+      { kind: 'circle', center: V(0, 0), radius: 2 },
+      polygon([V(0, 0), V(1, 0), V(0, 1)]),
+    ];
+    for (const parent of refused) {
+      expect(reasonOf('measure.distance', [parent])).toBe('bad parents: expected two points or a segment');
+    }
+    // Strict arity, never a subsequence: segment-plus-point is not a signature.
+    expect(reasonOf('measure.distance', [segment(0, 0, 1, 1), P(2, 2)])).toBe(
+      'bad parents: expected two points',
+    );
+    expect(reasonOf('measure.distance', [])).toBe('bad parents: expected two points');
+  });
+
+  it('reports non-finite coordinates for both signatures', () => {
+    expect(reasonOf('measure.distance', [P(Number.NaN, 0), P(1, 1)])).toBe('非有限坐标');
+    expect(reasonOf('measure.distance', [segment(0, 0, Number.POSITIVE_INFINITY, 1)])).toBe('非有限坐标');
+  });
+
   it('is deterministic for identical inputs', () => {
     expectDeterministic('measure.distance', [P(-2.5, 3.75), P(9, -1)]);
+    expectDeterministic('measure.distance', [segment(-2.5, 3.75, 9, -1)]);
   });
 });
 

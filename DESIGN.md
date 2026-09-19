@@ -379,7 +379,7 @@ waves; the palette + menu bar mirror GSP's structure (toolbox row + 构造/变�
 | 工具箱 文本 · 自定义工具 | 文本 → wave A; 自定义工具 → wave C |
 | 构造 对象上的点 / 交点 / 中点 / 垂线 / 平行线 / 角平分线 / 线段 / 直线 / 射线 / 圆(圆心+点、圆心+半径) | ✅ M1 |
 | 构造 三点圆 · 圆上的弧 · 三点弧 · 垂直平分线 | wave A |
-| 构造 内部(填充) | wave A — 多边形/圆用 `style.fill` 表达 + 菜单命令，不引入单独的类型 |
+| 构造 内部(填充) | wave A —— 多边形/圆用 `style.fill` 表达 + 菜单命令，不引入单独的类型（入口在 显示 → 标签与样式… 的「填充」，构造菜单暂无独立项） |
 | 构造 轨迹 | wave B |
 | 度量 距离 / 角度 / 面积 | ✅ M1 |
 | 度量 周长 · 斜率 · 比 · 坐标 · 弧长 · 弧角 · 方程 | wave A |
@@ -439,8 +439,8 @@ Gate figures G1–G5 (§4) remain the acceptance test for the whole parity push.
    corpus.
 4. File association / desktop wrapper (Tauri): the only reliable double-click
    path, necessary only if real teachers demand OS-level file association.
-5. Custom tools (record/replay constructions) — GSP's teacher-efficiency
-   superpower; schedule once the action registry has real usage mileage.
+5. Custom tools (record/replay constructions) — scheduled: §8.1 wave C, with the record
+   shape frozen in §8.2 (`Doc.tools` + materialise-once instances).
 6. **Vetoable premise (D17):** if the job is *static copies only* (draw, label,
    export — no dragging), say so explicitly; the architecture would shrink
    dramatically (no DAG recompute, no animation) and v1 would ship much sooner.

@@ -232,12 +232,15 @@ export function eraseTraces(store: Store): void {
 /**
  * 动画: flip the running state of every selected object's animation. Starting
  * only marks objects that can actually move (a numeric path parameter `t` with
- * a parameterised parent path); stopping clears the flag of the whole selection
- * and lets the clock commit its run.
+ * a parameterised parent path); stopping clears the flag of the whole selection.
  *
- * Starting is one undo entry (the flag). Stopping joins the run's open
- * transaction instead, so undoing a whole animation — its parameter and its
- * flag — is a single step.
+ * The flag flip happens **inside** the run's transaction, and the transaction is
+ * opened *before* the flag goes on, so its baseline carries `running: false` and
+ * the parameter where the run starts. One undo therefore returns the flag *and*
+ * everything the run moved — undoing a stopped animation cannot leave a live
+ * `running: true` behind and silently start the motion again. A run of several
+ * objects is one transaction, so stopping one of them keeps it open until the
+ * last one stops.
  */
 export function toggleAnimate(store: Store): void {
   const targets = new Set(store.selection);
@@ -253,8 +256,24 @@ export function toggleAnimate(store: Store): void {
       else startAnimation(rec, store.scene);
     }
   };
-  // A run in flight already owns a transaction; the flag belongs to it.
-  if (stopping && state.open) store.mutate(flip);
+
+  if (!stopping) {
+    // Nothing selected can move: no flag to set, and no transaction to open.
+    const movable = store.doc.objects.some(
+      (rec) => targets.has(rec.id) && animatablePath(rec, store.scene) !== undefined,
+    );
+    if (!movable) return;
+    store.begin();
+    state.open = true;
+    store.mutate(flip);
+    return;
+  }
+
+  // A run in flight already owns the transaction, so the flag flip goes inside
+  // it. The clock commits that transaction the moment *nothing* is animating
+  // any more — with this flip being the last, its commit happens during the
+  // notification below, and the baseline it pushes carries `running: false`.
+  if (state.open) store.mutate(flip);
   else store.edit(flip);
 }
 
@@ -373,11 +392,11 @@ function onFrame(store: Store, state: Attachment, ts: number): void {
 /** Advance every running animation by `dt` seconds, in one in-transaction pass. */
 function advance(store: Store, state: Attachment, dt: number): void {
   if (!state.open) {
-    // One transaction for the whole run, opened the moment the run first moves
-    // the document and committed when it stops: a stopped animation is a single
-    // undo entry, whatever it did in between (DESIGN.md §8.1 动画). Opening it
-    // here rather than when the loop starts keeps an animation that never moves
-    // (or is stopped before its first frame) from leaving a transaction behind.
+    // The start command already opened the run's transaction; this is the other
+    // way a run begins — a document that arrives with `running: true` (a loaded
+    // file, an undone redo). Opening it here keeps *any* run one undo entry,
+    // while a run that never moves (or stops before its first frame) leaves
+    // nothing behind.
     store.begin();
     state.open = true;
   }

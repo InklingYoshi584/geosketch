@@ -46,7 +46,7 @@ export class Store {
   private readonly listeners = new Set<() => void>();
   private readonly undoStack: string[] = [];
   private readonly redoStack: string[] = [];
-  private pending: string | null = null;
+  private readonly pending: string[] = [];
 
   constructor(doc: Doc = createEmptyDoc()) {
     this.doc = doc;
@@ -60,16 +60,22 @@ export class Store {
     };
   }
 
-  /** Start a transaction; a content snapshot is taken for undo on commit. */
+  /**
+   * Start a transaction; a content snapshot is taken for undo on commit.
+   * Transactions nest (a drag can open inside an animation run): only the
+   * outermost commit pushes an undo entry, so an inner gesture can never
+   * clobber another's baseline.
+   */
   begin(): void {
-    this.pending = this.snapshot();
+    this.pending.push(this.snapshot());
   }
 
-  /** End a transaction: one undo entry if the content changed. */
+  /** End a transaction: one undo entry when the outermost one closes with changes. */
   commit(): void {
-    const before = this.pending;
-    this.pending = null;
-    if (before !== null && before !== this.snapshot()) this.pushUndo(before);
+    const before = this.pending.pop();
+    if (before !== undefined && this.pending.length === 0 && before !== this.snapshot()) {
+      this.pushUndo(before);
+    }
     this.emit();
   }
 

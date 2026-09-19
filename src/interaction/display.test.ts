@@ -241,12 +241,14 @@ describe('trace', () => {
 });
 
 describe('animation', () => {
-  it('advances t by speed × dt and commits the whole run as one entry', () => {
+  it('advances t by speed × dt, and one undo of the stopped run returns flag and parameter', () => {
     const store = new Store(fixture());
     store.setSelection(['q']);
     toggleAnimate(store);
     expect(animateOf(store, 'q')).toEqual({ running: true, speed: 0.5, dir: 1 });
     expect(frames.size).toBe(1);
+    // The run is not over yet, so it has no undo entry of its own.
+    expect(store.canUndo()).toBe(false);
 
     frame(0); // the first frame only takes the clock's time base
     expect(tOf(store, 'q')).toBeCloseTo(0.25);
@@ -261,17 +263,24 @@ describe('animation', () => {
     expect(frames.size).toBe(0);
     expect(cancelled).toHaveLength(1);
 
-    // The whole run is one undo entry: undo returns the start of the run, and
-    // the restarted clock holds no half-open transaction (a dangling one would
-    // push an entry here and clear the redo stack).
+    // The whole run is one undo entry, its baseline taken with the flag *off*:
+    // undo stops the motion, returns the parameter, and cannot restart it.
     store.undo();
     expect(tOf(store, 'q')).toBeCloseTo(0.25);
-    expect(animateOf(store, 'q')?.running).toBe(true);
+    expect(animateOf(store, 'q')).toBeUndefined();
+    expect(frames.size).toBe(0);
+    expect(store.canUndo()).toBe(false); // the run was the whole history
     expect(store.canRedo()).toBe(true);
-    store.commit();
+    store.commit(); // nothing was left dangling…
     expect(store.canRedo()).toBe(true);
+    const undone = JSON.stringify(store.doc);
+    store.undo(); // …and a second undo has nothing left to do
+    expect(JSON.stringify(store.doc)).toBe(undone);
 
-    toggleAnimate(store); // let the restarted clock go again
+    // Redo restores the end of the run, still stopped.
+    store.redo();
+    expect(tOf(store, 'q')).toBeCloseTo(0.35);
+    expect(animateOf(store, 'q')?.running).toBe(false);
     expect(frames.size).toBe(0);
   });
 
@@ -300,6 +309,41 @@ describe('animation', () => {
     frame(5000); // a five-second stall must not teleport the animation, and the
     // negative side wraps like the positive one
     expect(tOf(store, 'q')).toBeCloseTo(0.85);
+  });
+
+  it('keeps one run open while a second animation is still going', () => {
+    const doc = fixture();
+    doc.objects.push({ id: 'r', type: 'point.onObject', parents: ['s'], params: { t: 0.5 } });
+    const store = new Store(doc);
+    store.setSelection(['q', 'r']);
+    toggleAnimate(store);
+    frame(0);
+    frame(100);
+    expect(tOf(store, 'q')).toBeCloseTo(0.3);
+    expect(tOf(store, 'r')).toBeCloseTo(0.55);
+
+    store.setSelection(['q']);
+    toggleAnimate(store); // stop one of the two
+    expect(animateOf(store, 'q')?.running).toBe(false);
+    expect(animateOf(store, 'r')?.running).toBe(true);
+    expect(frames.size).toBe(1); // the other keeps animating…
+    expect(store.canUndo()).toBe(false); // …so the run is still the same run
+
+    frame(200);
+    expect(tOf(store, 'q')).toBeCloseTo(0.3);
+    expect(tOf(store, 'r')).toBeCloseTo(0.6);
+
+    store.setSelection(['r']);
+    toggleAnimate(store); // the last one stops, and the run commits here
+    expect(frames.size).toBe(0);
+    expect(store.canUndo()).toBe(true);
+
+    store.undo(); // one entry: both parameters and both flags
+    expect(tOf(store, 'q')).toBeCloseTo(0.25);
+    expect(tOf(store, 'r')).toBeCloseTo(0.5);
+    expect(animateOf(store, 'q')).toBeUndefined();
+    expect(animateOf(store, 'r')).toBeUndefined();
+    expect(frames.size).toBe(0); // and neither restarts
   });
 
   it('refuses to animate a selection that has no path parameter', () => {

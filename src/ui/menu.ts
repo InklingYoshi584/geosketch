@@ -69,11 +69,17 @@ export function attachMenuBar(el: HTMLElement, store: Store, commands: MenuComma
 
   const gate = createLiveGate();
   const render = (): void => {
-    // A cheap digest first: the menus change with the selection, the object
-    // count, undo/redo availability and hidden flags — never with the viewport,
-    // which the store emits on every pan frame (see `live.ts`).
+    // What the menus depend on, cheaply: the kind behind each selected id (an
+    // object that just went undefined has no kind at all), the object count,
+    // hidden flags and undo/redo availability. Never the viewport, which the
+    // store emits on every pan frame (see `live.ts`).
     const key = [
       [...store.selection].join(','),
+      store.doc.objects.reduce(
+        (count, rec) => count + (store.scene.geoms.has(rec.id) ? 1 : 0),
+        0,
+      ),
+      store.scene.undefined.size,
       store.doc.objects.length,
       store.doc.objects.reduce((count, rec) => count + (rec.display?.hidden === true ? 1 : 0), 0),
       store.canUndo() ? 'undo' : '',

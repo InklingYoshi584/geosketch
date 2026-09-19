@@ -30,6 +30,8 @@ interface Board {
   handle: BoardHandle;
   /** The stubbed `window.confirm`: its answer, and what it was asked. */
   confirm: { answer: boolean; prompts: string[] };
+  /** The stubbed `window.prompt`: its answer (`null` = cancel), and its calls. */
+  prompt: { answer: string | null; calls: [string, string][] };
   down(x: number, y: number): void;
   move(x: number, y: number): void;
   up(x: number, y: number): void;
@@ -64,6 +66,7 @@ afterEach(() => {
 function attach(objects: ObjRecord[] = []): Board {
   const store = new Store(docWith(objects));
   const confirm = { answer: true, prompts: [] as string[] };
+  const prompt = { answer: '文本' as string | null, calls: [] as [string, string][] };
   const canvasHandlers = new Map<string, Handler[]>();
   const windowHandlers = new Map<string, Handler[]>();
   const listen =
@@ -92,6 +95,10 @@ function attach(objects: ObjRecord[] = []): Board {
       confirm.prompts.push(message);
       return confirm.answer;
     },
+    prompt: (message: string, defaultValue: string) => {
+      prompt.calls.push([message, defaultValue]);
+      return prompt.answer;
+    },
   };
 
   const handle = attachBoard(canvas, store);
@@ -117,6 +124,7 @@ function attach(objects: ObjRecord[] = []): Board {
     store,
     handle,
     confirm,
+    prompt,
     down,
     move: (x, y) => pointer('pointermove', x, y),
     up,
@@ -348,6 +356,62 @@ describe('delete tool', () => {
     board.tap(-5, -5);
     expect(board.confirm.prompts).toHaveLength(0);
     expect(board.store.doc.objects).toHaveLength(3);
+  });
+});
+
+describe('text tool', () => {
+  it('asks, then places the text where the teacher tapped', () => {
+    const board = attach();
+    board.store.setTool('text');
+    board.prompt.answer = '∠ABC = 60°';
+    board.tap(-3, 2);
+
+    expect(board.prompt.calls).toEqual([['文本内容', '文本']]);
+    const objects = board.store.doc.objects;
+    expect(objects).toHaveLength(1);
+    expect(objects[0].type).toBe('text.free');
+    expect(objects[0].parents).toEqual([]);
+    expect(objects[0].params).toEqual({ x: -3, y: 2, text: '∠ABC = 60°' });
+    expect([...board.store.selection]).toEqual([objects[0].id]);
+    expect(board.store.canUndo()).toBe(true);
+  });
+
+  it('creates nothing when the teacher cancels', () => {
+    const board = attach();
+    board.store.setTool('text');
+    board.prompt.answer = null;
+    board.tap(-3, 2);
+
+    expect(board.prompt.calls).toHaveLength(1);
+    expect(board.store.doc.objects).toHaveLength(0);
+    expect(board.store.canUndo()).toBe(false);
+  });
+
+  it('stays armed, so a whole figure can be annotated in a row', () => {
+    const board = attach();
+    board.store.setTool('text');
+    board.prompt.answer = '注';
+    board.tap(-3, 2);
+    board.tap(1, 1);
+
+    expect(board.store.tool).toBe('text');
+    expect(board.store.doc.objects.map((o) => o.params)).toEqual([
+      { x: -3, y: 2, text: '注' },
+      { x: 1, y: 1, text: '注' },
+    ]);
+    expect(board.handle.pendingCount()).toBe(0);
+  });
+
+  it('places the text over an object instead of selecting it', () => {
+    const board = attach([freePoint('p1', 0, 0)]);
+    board.store.setTool('text');
+    board.prompt.answer = 'A';
+    board.tap(0, 0);
+
+    expect(board.store.doc.objects).toHaveLength(2);
+    expect(board.store.doc.objects[1].params).toEqual({ x: 0, y: 0, text: 'A' });
+    // The point is untouched, and the new text is what is selected.
+    expect([...board.store.selection]).toEqual([board.store.doc.objects[1].id]);
   });
 });
 

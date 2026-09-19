@@ -20,6 +20,7 @@ const PALETTE: readonly [Tool, string, string | null][] = [
   ['measure.distance', '距离', null],
   ['measure.angle', '角度', null],
   ['measure.area', '面积', null],
+  ['text', '文本', null],
   ['delete', '删除', null],
 ];
 

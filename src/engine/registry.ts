@@ -48,7 +48,13 @@ const IS_PARAMETERISED: Record<Geometry['kind'], boolean> = {
   line: true,
   ray: true,
   circle: true,
+  // An arc is *parameterisable in principle* (its sweep is an angle domain),
+  // but wave A freezes `PathGeometry` at segment/line/ray/circle: nothing
+  // consumes one yet, and a `'path'` slot that accepted arcs would make
+  // `point.onObject`/`intersection` promise behaviour they do not have.
+  arc: false,
   polygon: false,
+  text: false,
   number: false,
 };
 

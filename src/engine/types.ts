@@ -50,6 +50,23 @@ export interface LabelSpec {
 }
 
 /**
+ * How an object is *shown* rather than how it is *defined* (DESIGN.md §8.1
+ * "显示"): hidden objects still compute, so their dependents keep working, but
+ * the renderer skips them and they cannot be picked; a traced object records
+ * its past geometries in a board-local ring buffer (`interaction/display.ts`);
+ * an animated object has its path parameter advanced by the animation clock.
+ *
+ * These flags live in the document (they are part of the sketch, and undo
+ * covers them) — the *trail* itself never does: it is session state, like the
+ * viewport and the tool.
+ */
+export interface DisplayFlags {
+  hidden?: boolean;
+  trace?: boolean;
+  animate?: { running: boolean; speed: number; dir: 1 | -1 };
+}
+
+/**
  * One object of the construction: its identity, its type (a key into the type
  * registry), the objects it is *defined by*, and its type-specific parameters.
  */
@@ -60,6 +77,7 @@ export interface ObjRecord {
   params: Json;
   style?: Style;
   label?: LabelSpec;
+  display?: DisplayFlags;
 }
 
 /** A whole sketch. `version` is bumped only for breaking schema changes. */

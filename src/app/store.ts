@@ -10,6 +10,7 @@ const HISTORY_LIMIT = 200;
 export type Tool =
   | 'select'
   | 'point'
+  | 'text'
   | 'segment'
   | 'line'
   | 'ray'
@@ -136,9 +137,11 @@ export class Store {
     this.emit();
   }
 
-  /** Hit-test against the current scene; world-space tolerance. Number readouts are hit via their anchors. */
+  /** Hit-test against the current scene; world-space tolerance. Number readouts are hit via their anchors; hidden objects are unhittable (a single mechanism: hitTest's optional `hidden` set). */
   pick(world: Vec2, tolWorld: number): Id[] {
-    return hitTest(this.scene, world, tolWorld, anchorsOf(this.doc, this.scene));
+    const hidden = new Set<Id>();
+    for (const rec of this.doc.objects) if (rec.display?.hidden === true) hidden.add(rec.id);
+    return hitTest(this.scene, world, tolWorld, anchorsOf(this.doc, this.scene), hidden);
   }
 
   /** Document content only — the viewport is deliberately excluded (see class docs). */

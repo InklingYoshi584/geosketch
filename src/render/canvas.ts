@@ -9,6 +9,7 @@ import {
   type Style,
   type Vec2,
 } from '../engine';
+import { tracesOf } from '../interaction/display';
 import { formatNumber } from './format';
 import { ViewTransform, backingSize, type ScreenPoint } from './viewport';
 
@@ -38,6 +39,11 @@ const SELECTION_GAP_PX = 3;
 const SELECTION_WIDTH_PX = 2;
 /** How far outside the canvas a circle may reach before it is culled entirely. */
 const CULL_MARGIN_PX = 16;
+
+/** A traced object's trail: lighter and thinner than the object it shadows. */
+const TRAIL_ALPHA = 0.35;
+const TRAIL_WIDTH_PX = 1;
+const TRAIL_DOT_RADIUS = 1.2;
 
 const NO_DASH: number[] = [];
 
@@ -78,7 +84,7 @@ export function render(canvas: HTMLCanvasElement, store: Store): void {
   const t = new ViewTransform(store.doc.viewport, cssWidth, cssHeight, dpr);
   drawGrid(ctx, t);
   drawAxes(ctx, t);
-  drawScene(ctx, t, store.doc, store.scene, store.selection);
+  drawScene(ctx, t, store.doc, store.scene, store.selection, tracesOf(store));
 }
 
 /** Device pixel ratio, defaulting to 1 where there is no window (headless render). */
@@ -91,6 +97,12 @@ function devicePixelRatio(): number {
  * Draws the construction itself — no grid, no canvas sizing — so a frame can be
  * driven from a stub context in tests. Objects whose geometry is missing (an
  * undefined or unregistered id) are skipped.
+ *
+ * Two display rules ride on top (DESIGN.md §8.1 显示): an object the document
+ * *hides* is skipped entirely — trail included, since the whole point of hiding
+ * is that nothing of it shows — and a traced object's trail is drawn as one
+ * lighter pass *behind* the construction, so the trail never covers the objects
+ * it shadows. `traces` is optional: without it a frame is exactly the document.
  */
 export function drawScene(
   ctx: CanvasRenderingContext2D,
@@ -98,12 +110,22 @@ export function drawScene(
   doc: Doc,
   scene: Scene,
   selection: ReadonlySet<Id>,
+  traces?: ReadonlyMap<Id, readonly Geometry[]>,
 ): void {
+  if (traces !== undefined && traces.size > 0) {
+    for (const rec of doc.objects) {
+      if (rec.display?.hidden === true) continue;
+      const trail = traces.get(rec.id);
+      if (trail !== undefined && trail.length > 0) drawTrail(ctx, t, rec, trail);
+    }
+  }
+
   // Readouts are the only kind whose place comes from other objects, so the
   // anchor table (shared with hit-testing) is built on demand.
   let anchors: ReadonlyMap<Id, Vec2> | null = null;
   const overlay: ObjRecord[] | null = selection.size === 0 ? null : [];
   for (const rec of doc.objects) {
+    if (rec.display?.hidden === true) continue;
     const geom = scene.geoms.get(rec.id);
     if (geom === undefined) continue;
     if (geom.kind === 'number' && anchors === null) anchors = anchorsOf(doc, scene);
@@ -112,6 +134,7 @@ export function drawScene(
   }
   if (overlay === null) return;
   for (const rec of overlay) {
+    if (rec.display?.hidden === true) continue;
     const geom = scene.geoms.get(rec.id);
     if (geom !== undefined) drawObject(ctx, t, rec, geom, anchors, true);
   }
@@ -149,9 +172,18 @@ function drawObject(
     case 'circle':
       drawCircle(ctx, t, rec, geom.center, geom.radius, selected);
       return;
+    case 'arc':
+      drawArc(ctx, t, rec, geom.center, geom.radius, geom.from, geom.to, selected);
+      return;
     case 'polygon':
       drawPolygon(ctx, t, rec, geom.points, selected);
       return;
+    case 'text': {
+      const at = toScreenPoint(t, geom.at);
+      if (at === null) return;
+      drawText(ctx, rec, geom.text, at, selected);
+      return;
+    }
     case 'number':
       drawNumber(ctx, t, rec, geom.value, geom.unit, anchors?.get(rec.id), selected);
       return;
@@ -439,6 +471,77 @@ function drawPolygon(
 }
 
 /**
+ * An arc: the part of the circle about `center` that sweeps counter-clockwise
+ * from `from` to `to` (radians; the engine normalises the sweep into `(0, 2π]`).
+ * World angles are y-up and the canvas is y-down, so both angles are negated —
+ * a positive world sweep then reads counter-clockwise on screen. Arcs are
+ * strokes: `style.fill` is for interiors (polygons and circles), not for them.
+ */
+function drawArc(
+  ctx: CanvasRenderingContext2D,
+  t: ViewTransform,
+  rec: ObjRecord,
+  center: Vec2,
+  radius: number,
+  from: number,
+  to: number,
+  selected: boolean,
+): void {
+  const at = toScreenPoint(t, center);
+  const r = radius * t.viewport.scale;
+  if (at === null || !Number.isFinite(r) || r <= 0) return;
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return;
+  if (
+    at.x + r < -CULL_MARGIN_PX ||
+    at.x - r > t.cssWidth + CULL_MARGIN_PX ||
+    at.y + r < -CULL_MARGIN_PX ||
+    at.y - r > t.cssHeight + CULL_MARGIN_PX
+  ) {
+    return;
+  }
+  ctx.beginPath();
+  ctx.arc(at.x, at.y, r, -from, -to, true);
+  strokePath(ctx, paintOf(rec.style, selected));
+}
+
+/**
+ * A free text object: its string, at its own anchor, in the label font and
+ * left-aligned. Its colour falls back from the label's to the style's stroke,
+ * so both the label dialog and the style dialog can colour it. A selected text
+ * gets the box a selected readout gets — there is no outline to re-trace on
+ * glyphs.
+ */
+function drawText(
+  ctx: CanvasRenderingContext2D,
+  rec: ObjRecord,
+  text: string,
+  at: ScreenPoint,
+  selected: boolean,
+): void {
+  if (text === '') return;
+  const label = rec.label;
+  const size = finiteOr(label?.size, DEFAULT_LABEL_SIZE);
+  ctx.font = `${size > 0 ? size : DEFAULT_LABEL_SIZE}px ${LABEL_FONT_STACK}`;
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'middle';
+  if (selected) {
+    ctx.setLineDash(NO_DASH);
+    ctx.strokeStyle = SELECTION_COLOR;
+    ctx.lineWidth = SELECTION_WIDTH_PX;
+    const half = ctx.measureText(text).width / 2 + NUMBER_SELECTION_PAD;
+    ctx.strokeRect(
+      at.x - half,
+      at.y - size / 2 - NUMBER_SELECTION_PAD,
+      half * 2,
+      size + NUMBER_SELECTION_PAD * 2,
+    );
+    return;
+  }
+  ctx.fillStyle = label?.color ?? rec.style?.stroke ?? INK_COLOR;
+  ctx.fillText(text, at.x, at.y);
+}
+
+/**
  * A measured number: text anchored at the anchor table's entry for its parents
  * (the average of their sample points), offset by `label.dx/dy`, and formatted
  * with the label as a prefix. A selected readout gets a box rather than a
@@ -476,6 +579,131 @@ function drawNumber(
   }
   ctx.fillStyle = label?.color ?? INK_COLOR;
   ctx.fillText(text, x, y);
+}
+
+/**
+ * A traced object's past geometries, drawn as one lighter pass *behind* the
+ * construction (DESIGN.md §8.1 显示 › 追踪): paths are stroked, points become the
+ * dotted trail GSP leaves behind. Readouts and free text have no outline to
+ * trace, so they are skipped rather than smeared. The paint is the object's own
+ * colour at reduced opacity — thin, never filled, so a trail can never blot out
+ * the objects drawn over it.
+ */
+function drawTrail(
+  ctx: CanvasRenderingContext2D,
+  t: ViewTransform,
+  rec: ObjRecord,
+  trail: readonly Geometry[],
+): void {
+  const paint = paintOf(rec.style, false);
+  ctx.setLineDash(NO_DASH);
+  ctx.lineWidth = Math.max(TRAIL_WIDTH_PX, paint.width * 0.75);
+  ctx.strokeStyle = paint.stroke;
+  ctx.fillStyle = paint.stroke;
+  ctx.globalAlpha = TRAIL_ALPHA;
+  strokeTrailPaths(ctx, t, trail);
+  fillTrailDots(ctx, t, trail);
+  ctx.globalAlpha = 1;
+}
+
+function strokeTrailPaths(
+  ctx: CanvasRenderingContext2D,
+  t: ViewTransform,
+  trail: readonly Geometry[],
+): void {
+  ctx.beginPath();
+  let started = false;
+  for (const geom of trail) {
+    if (appendTrailPath(ctx, t, geom)) started = true;
+  }
+  if (started) ctx.stroke();
+}
+
+/** Append one past geometry to the current path; `false` when it has no stroke. */
+function appendTrailPath(
+  ctx: CanvasRenderingContext2D,
+  t: ViewTransform,
+  geom: Geometry,
+): boolean {
+  switch (geom.kind) {
+    case 'segment': {
+      const a = toScreenPoint(t, geom.a);
+      const b = toScreenPoint(t, geom.b);
+      if (a === null || b === null) return false;
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      return true;
+    }
+    case 'line':
+    case 'ray': {
+      const span = clipToBounds(t, geom.at, geom.dir, geom.kind === 'ray');
+      if (span === null) return false;
+      const a = toScreenPoint(t, span[0]);
+      const b = toScreenPoint(t, span[1]);
+      if (a === null || b === null) return false;
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      return true;
+    }
+    case 'circle': {
+      const at = toScreenPoint(t, geom.center);
+      const r = geom.radius * t.viewport.scale;
+      if (at === null || !Number.isFinite(r) || r <= 0) return false;
+      ctx.moveTo(at.x + r, at.y);
+      ctx.arc(at.x, at.y, r, 0, Math.PI * 2);
+      return true;
+    }
+    case 'arc': {
+      const at = toScreenPoint(t, geom.center);
+      const r = geom.radius * t.viewport.scale;
+      if (at === null || !Number.isFinite(r) || r <= 0) return false;
+      if (!Number.isFinite(geom.from) || !Number.isFinite(geom.to)) return false;
+      const start = toScreenPoint(t, {
+        x: geom.center.x + geom.radius * Math.cos(geom.from),
+        y: geom.center.y + geom.radius * Math.sin(geom.from),
+      });
+      if (start === null) return false;
+      ctx.moveTo(start.x, start.y);
+      ctx.arc(at.x, at.y, r, -geom.from, -geom.to, true);
+      return true;
+    }
+    case 'polygon': {
+      if (geom.points.length < 3) return false;
+      const screen: ScreenPoint[] = [];
+      for (const p of geom.points) {
+        const at = toScreenPoint(t, p);
+        if (at === null) return false;
+        screen.push(at);
+      }
+      ctx.moveTo(screen[0].x, screen[0].y);
+      for (let i = 1; i < screen.length; i++) ctx.lineTo(screen[i].x, screen[i].y);
+      ctx.closePath();
+      return true;
+    }
+    case 'point':
+    case 'number':
+    case 'text':
+      return false;
+  }
+}
+
+/** A traced point leaves dots, which is the trail a teacher reads as a locus. */
+function fillTrailDots(
+  ctx: CanvasRenderingContext2D,
+  t: ViewTransform,
+  trail: readonly Geometry[],
+): void {
+  ctx.beginPath();
+  let started = false;
+  for (const geom of trail) {
+    if (geom.kind !== 'point') continue;
+    const at = toScreenPoint(t, geom.at);
+    if (at === null) continue;
+    ctx.moveTo(at.x + TRAIL_DOT_RADIUS, at.y);
+    ctx.arc(at.x, at.y, TRAIL_DOT_RADIUS, 0, Math.PI * 2);
+    started = true;
+  }
+  if (started) ctx.fill();
 }
 
 function finiteOr(value: number | undefined, fallback: number): number {

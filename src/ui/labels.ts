@@ -53,6 +53,7 @@ export const TOOLS: readonly ToolInfo[] = [
   { tool: 'measure.distance', label: '距离', hint: '点击两点（或一条线段）测量距离', shortcut: null },
   { tool: 'measure.angle', label: '角度', hint: '点击三点测角度，中间的点是顶点', shortcut: null },
   { tool: 'measure.area', label: '面积', hint: '点击一个多边形或圆测量面积', shortcut: null },
+  { tool: 'text', label: '文本', hint: '点击空白处放置文本', shortcut: null },
   { tool: 'delete', label: '删除', hint: '点击要删除的对象', shortcut: null },
 ];
 

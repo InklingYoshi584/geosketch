@@ -19,9 +19,12 @@ deliberate choices from accidents.
   touch-first UI; notation-first (congruence ticks, angle arcs, right-angle
   squares, parallel arrows — things GSP never had as first-class objects);
   free, zero-install, offline-capable, hosted on GitHub Pages; open source (MIT).
-- **Explicit non-goals for v1:** exact/verified arithmetic (Cinderella-style
-  theorem-proving), constraint solver, 3D, accounts/cloud/collaboration,
-  `.gsp` import (see M3), loci, custom tools, iteration/fractals, conics.
+- **Scope authority (revised 2026-09-17):** the target is **feature parity with
+  Geometer's Sketchpad 5** — §8.1 holds the parity matrix and the wave plan; the
+  previously out-of-scope items (loci, custom tools, iteration, conics) are scheduled
+  work now, not exclusions. §8.2 freezes the record shapes for the model-level features.
+- **Standing non-goals:** exact/verified arithmetic (Cinderella-style theorem-proving),
+  a numeric constraint solver, 3D, accounts/cloud/collaboration, `.gsp` import (M3).
 
 ## 2. Decision log
 
@@ -362,6 +365,72 @@ store's `pick` passes that map.
   document parse; (4) map onto the registry, reporting degraded objects
   explicitly rather than dropping them.
 
+## 8.1 GSP parity target (user directive, 2026-09-17)
+
+> "Just copy everything from Sketchpad."
+
+The target is **feature parity with Geometer's Sketchpad 5's surface**, delivered in
+waves; the palette + menu bar mirror GSP's structure (toolbox row + 构造/变换/度量/数据/
+绘图/显示 menus) rather than a redesign of our own.
+
+| GSP surface | Status |
+|---|---|
+| 工具箱 箭头 / 点 / 直尺(线段·直线·射线) / 圆规 | ✅ M1.1 |
+| 工具箱 文本 · 自定义工具 | 文本 → wave A; 自定义工具 → wave C |
+| 构造 对象上的点 / 交点 / 中点 / 垂线 / 平行线 / 角平分线 / 线段 / 直线 / 射线 / 圆(圆心+点、圆心+半径) | ✅ M1 |
+| 构造 三点圆 · 圆上的弧 · 三点弧 · 垂直平分线 | wave A |
+| 构造 内部(填充) | wave A — 多边形/圆用 `style.fill` 表达 + 菜单命令，不引入单独的类型 |
+| 构造 轨迹 | wave B |
+| 度量 距离 / 角度 / 面积 | ✅ M1 |
+| 度量 周长 · 斜率 · 比 · 坐标 · 弧长 · 弧角 · 方程 | wave A |
+| 度量 计算… · 制表 | wave B |
+| 数据/绘图 坐标系 · 网格样式 · 绘制点 · 绘制函数 · 新建参数 · 新建函数 · 导数 | wave B |
+| 显示 标签/颜色/线型/线宽/点大小（对象属性） | wave A（样式对话框） |
+| 显示 追踪 · 动画 · 隐藏/显示 · 擦除痕迹 | wave A（DisplayOps） |
+| 显示 运动控制台（速度/方向） | wave B |
+| 变换 平移/旋转/缩放/反射 + 标记中心·向量·角度·比 | wave C |
+| 变换 迭代 / 深度迭代 / 自定义变换 | wave C |
+| 编辑 选择父对象/子对象 · 全选 · 删除 · 分离 · 属性；复制/粘贴 | wave A（剪贴板 → wave C） |
+| 文件 新建/打开/保存/另存为/导出 PNG/打印 | ✅（另存为 → wave A）；导出 SVG → wave B（序列化器尚未实现，菜单项暂置灰） |
+| 发布到网页（JavaSketchpad） | 不需要 —— 本项目的文件本身就是 URL |
+
+Wave A adds two geometry kinds (`arc`, `text`), the extra constructions and measures, a
+menu bar bound to the engine's actions, a style/label dialog, and display operations
+(hide / trace / animate / erase). Wave B is the graph-and-data surface plus the motion
+controller and loci. Wave C is transformations with marks, iteration, custom tools and
+the clipboard. Interiors are expressed with `style.fill` on the polygon/circle objects —
+a separate interior type would duplicate identity we already have.
+
+### 8.2 Frozen record shapes for the model-level features (fixed before their waves)
+
+These add *document-model* structure, not merely new types; the encodings are frozen here
+so parallel waves cannot invent incompatible ones.
+
+- **参数** `param.number` — params `{value, min?, max?, step?}` → `number`; the UI admits a
+  slider affordance for this type.
+- **计算** `calc` — parents: the number objects the expression references; params
+  `{expr: string}` → `number`. The expression grammar lands with wave B and is the same
+  parser the plot objects use.
+- **坐标系** `axes` — params `{cx, cy, scale, grid: 'none' | 'square'}` →
+  `{ kind: 'axes'; origin: Vec2; unit: number }`. The viewport stays the camera; the axes
+  object is the world coordinate system (GSP's 坐标系).
+- **绘制点 / 绘制函数** — `plot.point` [axes?, number, number] → point; `plot.function`
+  [axes?, …numbers] params `{expr, domain: [a, b]}` → `{ kind: 'curve'; runs: Vec2[][] }`
+  (sampled 512 points, viewport-independent, split into runs across undefined stretches).
+- **轨迹** `locus` — parents `[tracedObject, driverPointOnPath]`, params `{samples: 128}` →
+  the same `curve` kind, computed by sweeping the driver's path parameter and recomputing
+  the traced object per sample.
+- **迭代** `iterate` — parents `[prototype objects…, driver]`, params `{depth, random?}` →
+  `{ kind: 'compound'; parts: Geometry[] }`: a new kind the renderer draws as a group and
+  `hitTest` treats as the nearest of its parts.
+- **自定义工具** — document-level, not a type: `Doc.tools?: ToolDef[]` with
+  `ToolDef { id, name, inputs: {label, kind}[], template: Omit<ObjRecord,'id'>[] (parents
+  referenced by index into `inputs ++ template`), outputs: number[] }`; an instance is
+  created by **materialising** the template with fresh ids (replay at creation time — no
+  compute-time expansion), so the DAG stays flat and inspectable.
+
+Gate figures G1–G5 (§4) remain the acceptance test for the whole parity push.
+
 ## 9. Open questions (deliberately unresolved)
 
 1. Chinese display name for teacher-facing UI (after M2, with real screenshots).
@@ -375,3 +444,10 @@ store's `pick` passes that map.
 6. **Vetoable premise (D17):** if the job is *static copies only* (draw, label,
    export — no dragging), say so explicitly; the architecture would shrink
    dramatically (no DAG recompute, no animation) and v1 would ship much sooner.
+7. **Store transaction token** (found while landing display ops): the store holds a single
+   `pending` snapshot, so a canvas drag *during* an animation run clobbers the run's begin
+   snapshot and one history entry can be lost. Fix when it bites: make `begin()` return a
+   token and have `commit(token)` ignore stale ones.
+8. **Undo of a stopped animation** restores the snapshot taken when the run opened, which
+   still has `running: true` — so the clock restarts on undo. Consistent with the snapshot,
+   but if teachers find it surprising, clear the flag before the run's transaction opens.

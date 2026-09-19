@@ -178,7 +178,9 @@ describe('actionsFor', () => {
     expect(ids(actionsFor(doc, scene, ['A', 'A', 'B']))).toContain('segment:0');
     expect(actionsFor(doc, scene, ['A', 'B', 'ghost'])).toEqual([]);
     expect(actionsFor(doc, scene, [])).toEqual([]);
-    expect(actionsFor(doc, scene, ['A'])).toEqual([]);
+    // A lone point is a dead end for construction but not for measurement:
+    // 坐标 is offered on any single point now.
+    expect(actionsFor(doc, scene, ['A']).map((action) => action.id)).toEqual(['measure.coordinates:0']);
 
     // Two parallel segments intersect nowhere: the intersection is undefined and
     // has no kind left to match a signature against.

@@ -20,6 +20,7 @@ import {
   finishPending,
   pendingCount,
   reduceClick,
+  textRecord,
   type PendingState,
   type Reduction,
 } from './tools';
@@ -361,12 +362,31 @@ export function attachBoard(canvas: HTMLCanvasElement, store: Store): BoardHandl
       deleteWithPreview(store, result.remove);
       return;
     }
+    if (result.askAt !== undefined) {
+      placeText(result.askAt);
+      return;
+    }
     if (result.created.length > 0) {
       store.edit((doc) => {
         doc.objects.push(...result.created);
       });
     }
     if (result.select !== undefined) store.setSelection(result.select);
+  }
+
+  /**
+   * The 文本 tool: ask for the string, then put it where the click landed. Only a
+   * confirmed answer makes an object — cancelling leaves the figure as it was —
+   * and the tool stays armed so a teacher can annotate a whole figure in a row.
+   */
+  function placeText(at: Vec2): void {
+    const text = window.prompt('文本内容', '文本');
+    if (text === null) return;
+    const record = textRecord(at, text);
+    store.edit((doc) => {
+      doc.objects.push(record);
+    });
+    store.setSelection([record.id]);
   }
 
   /** Hand a tap to the active tool: the press position, and what is under it. */

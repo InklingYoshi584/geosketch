@@ -27,6 +27,14 @@ import { EPS, dist, distSq, dot, lerp, sub } from './kernel/vec2';
  *   circle   P(t) = center + r(cos t, sin t),  t ∈ [0, 2π)
  * Stored parameters are never rewritten by `compute` (a glued point keeps its
  * proportion when its parent moves); interaction clamps while dragging.
+ *
+ * Two kinds are positional rather than parameterised (wave A, DESIGN.md §8.1):
+ * - `arc` is a *partial* circle: `from`→`to` runs counter-clockwise, and
+ *   `to − from` **is** the sweep normalised into `(0, 2π]`, so a consumer may
+ *   carry `to` past 2π and must never fold it modulo 2π on its own.
+ * - `text` is a free annotation anchored at `at`; its extent needs font
+ *   metrics the DOM-free engine does not have, so both the hit test and the
+ *   label anchor treat it as its anchor point.
  */
 export type Geometry =
   | { kind: 'point'; at: Vec2 }
@@ -34,7 +42,9 @@ export type Geometry =
   | { kind: 'line'; at: Vec2; dir: Vec2 }
   | { kind: 'ray'; at: Vec2; dir: Vec2 }
   | { kind: 'circle'; center: Vec2; radius: number }
+  | { kind: 'arc'; center: Vec2; radius: number; from: number; to: number }
   | { kind: 'polygon'; points: Vec2[] }
+  | { kind: 'text'; at: Vec2; text: string }
   | { kind: 'number'; value: number; unit?: 'deg' };
 
 /** The parameterised kinds — what a `'path'` parent slot accepts. */
@@ -190,6 +200,17 @@ function wrapTau(t: number): number {
   return wrapped < 0 ? wrapped + TWO_PI : wrapped;
 }
 
+/**
+ * The counter-clockwise sweep from `from` to `to`, folded into the arc
+ * contract's range `(0, 2π]`: a full turn is `2π` rather than 0, so "the two
+ * angles coincide" never silently becomes "the arc is empty". The one caller
+ * that must reject coincident endpoints (objects/arcs.ts) says so itself.
+ */
+export function positiveSweep(from: number, to: number): number {
+  const sweep = wrapTau(to - from);
+  return sweep > 0 ? sweep : TWO_PI;
+}
+
 /** A segment's parameter. */
 function clamp01(t: number): number {
   return t < 0 ? 0 : t > 1 ? 1 : t;
@@ -209,8 +230,9 @@ function centroid(points: readonly Vec2[]): Vec2 {
 /**
  * The sample point of a geometry: the representative point a label sits on, in
  * the frozen per-kind rule (point→at, segment→midpoint, line/ray→at,
- * circle→center, polygon→centroid). A `number` has no position of its own, so
- * `anchorsOf` — which has the parent graph — resolves it to the origin here.
+ * circle→center, arc→center, polygon→centroid, text→its anchor). A `number` has
+ * no position of its own, so `anchorsOf` — which has the parent graph —
+ * resolves it to the origin here.
  *
  * The returned vector is a fresh copy: callers may keep or mutate it freely.
  */
@@ -226,8 +248,12 @@ function samplePointOf(geom: Geometry): Vec2 {
       return { x: geom.at.x, y: geom.at.y };
     case 'circle':
       return { x: geom.center.x, y: geom.center.y };
+    case 'arc':
+      return { x: geom.center.x, y: geom.center.y };
     case 'polygon':
       return centroid(geom.points);
+    case 'text':
+      return { x: geom.at.x, y: geom.at.y };
     case 'number':
       return { x: 0, y: 0 };
   }
@@ -262,7 +288,9 @@ export function evalPath(geom: Geometry, t: number): Vec2 {
       };
     }
     case 'point':
+    case 'arc':
     case 'polygon':
+    case 'text':
     case 'number':
       return samplePointOf(geom);
   }
@@ -296,7 +324,9 @@ function rawProjection(geom: Geometry, world: Vec2): number {
     case 'circle':
       return wrapTau(Math.atan2(world.y - geom.center.y, world.x - geom.center.x));
     case 'point':
+    case 'arc':
     case 'polygon':
+    case 'text':
     case 'number':
       return 0;
   }
@@ -315,14 +345,46 @@ function distSqToSegment(a: Vec2, b: Vec2, world: Vec2): number {
 }
 
 /**
+ * Squared distance from `world` to the **swept part** of an arc. The angle of
+ * `world` about the centre decides whether it projects onto the sweep at all;
+ * outside the sweep the nearest point on the arc is whichever endpoint is
+ * closer, which is what keeps a nearly-swept tap near an endpoint working while
+ * the unused part of the circle stays unhittable.
+ *
+ * A radius that is not positive leaves both endpoints at the centre, so the
+ * degenerate arc reads as the point it collapsed to.
+ */
+function distSqToArc(arc: Extract<Geometry, { kind: 'arc' }>, world: Vec2): number {
+  const radius = Math.abs(arc.radius);
+  const sweep = positiveSweep(arc.from, arc.to);
+  const angle = Math.atan2(world.y - arc.center.y, world.x - arc.center.x);
+  if (radius > 0 && wrapTau(angle - arc.from) <= sweep) {
+    const dx = arc.center.x + radius * Math.cos(angle) - world.x;
+    const dy = arc.center.y + radius * Math.sin(angle) - world.y;
+    return dx * dx + dy * dy;
+  }
+  const start = {
+    x: arc.center.x + radius * Math.cos(arc.from),
+    y: arc.center.y + radius * Math.sin(arc.from),
+  };
+  const end = {
+    x: arc.center.x + radius * Math.cos(arc.to),
+    y: arc.center.y + radius * Math.sin(arc.to),
+  };
+  return Math.min(distSq(start, world), distSq(end, world));
+}
+
+/**
  * Distance from `world` to a geometry, squared. This switch is the extension
  * seam for new geometry kinds: adding one makes this non-exhaustive, which is a
  * compile error here.
  *
  * A point, a segment and a ray are hit at their nearest point; a line is hit at
  * its nearest point, which is unclamped; a circle is hit on its ring, never at
- * its centre; a polygon is hit on its boundary only; and a `number` is
- * positionless, so `hitTest` measures to the anchor its parents give it.
+ * its centre; an arc is hit on its swept part only; a polygon is hit on its
+ * boundary only; a text is hit at its anchor, the small disc its extent reduces
+ * to without font metrics; and a `number` is positionless, so `hitTest`
+ * measures to the anchor its parents give it.
  */
 function distSqToGeometry(geom: Geometry, world: Vec2): number {
   switch (geom.kind) {
@@ -337,6 +399,10 @@ function distSqToGeometry(geom: Geometry, world: Vec2): number {
       const radial = dist(geom.center, world) - geom.radius;
       return radial * radial;
     }
+    case 'arc':
+      return distSqToArc(geom, world);
+    case 'text':
+      return distSq(geom.at, world);
     case 'polygon': {
       const points = geom.points;
       if (points.length === 0) return Number.POSITIVE_INFINITY;
@@ -407,12 +473,15 @@ export function anchorsOf(doc: Doc, scene: Scene): Map<Id, Vec2> {
  * Hit priority by object size, used only when distances tie (or nearly do):
  * a point must beat the path it lies on, or dragging a triangle vertex — or any
  * vertex of a polygon — would be impossible (`ids[0]` is what a tap selects).
+ * A text ranks with a `number`: both are anchor-drawn readouts, so a draggable
+ * point sharing their anchor wins the tie.
  */
 function hitRank(geom: Geometry): number {
   switch (geom.kind) {
     case 'point':
       return 0;
     case 'number':
+    case 'text':
       return 1;
     default:
       return 2;
@@ -422,24 +491,28 @@ function hitRank(geom: Geometry): number {
 /**
  * Ids of objects within `tolWorld` of `world` (world units; the caller converts
  * from pixels), nearest first. Ties are broken by hit priority (point before
- * number before path) and then by draw order — the last drawn object wins — so
- * `ids[0]` is what a tap should select.
+ * number/text before path) and then by draw order — the last drawn object wins
+ * — so `ids[0]` is what a tap should select.
  *
  * Objects that are undefined have no geometry and cannot be hit. A `number` is
  * positionless, so it is hit at the anchor `anchors` gives it (see
- * `anchorsOf`); called without that map, numbers are simply not hit.
+ * `anchorsOf`); called without that map, numbers are simply not hit. `hidden`
+ * excludes display-hidden objects (DESIGN.md §8.1 "显示"): they still compute,
+ * and their dependents keep working, but nothing can tap them.
  */
 export function hitTest(
   scene: Scene,
   world: Vec2,
   tolWorld: number,
   anchors?: ReadonlyMap<Id, Vec2>,
+  hidden?: ReadonlySet<Id>,
 ): Id[] {
   const tolSq = tolWorld * tolWorld;
   const hits: { id: Id; dSq: number; rank: number; order: number }[] = [];
   let order = 0;
   for (const [id, geom] of scene.geoms) {
     order += 1;
+    if (hidden?.has(id)) continue;
     let dSq: number;
     if (geom.kind === 'number') {
       const anchor = anchors?.get(id);

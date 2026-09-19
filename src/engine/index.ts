@@ -7,10 +7,12 @@
  */
 import './objects/point-free';
 import './objects/paths';
+import './objects/arcs';
 import './objects/point-on-object';
 import './objects/intersection';
 import './objects/derived';
 import './objects/measures';
+import './objects/text';
 
 export type { Doc, Id, Json, LabelSpec, ObjRecord, Style, Vec2, Viewport } from './types';
 export type { Geometry, LineLikeGeometry, PathGeometry, Scene } from './scene';

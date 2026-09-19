@@ -1,8 +1,8 @@
 /**
  * Derived constructions (DESIGN.md §3: midpoints, perpendiculars, parallels,
- * angle bisectors). Every type here is *defined by* its parents — the point a
- * perpendicular passes through is a parent, not a stored coordinate — so
- * dragging a parent recomputes all of it (D8).
+ * angle bisectors, perpendicular bisectors). Every type here is *defined by* its
+ * parents — the point a perpendicular passes through is a parent, not a stored
+ * coordinate — so dragging a parent recomputes all of it (D8).
  *
  * Numeric model: float64 with *relative* epsilons (DESIGN.md §5). A direction
  * is "degenerate" when its length is not meaningfully larger than the
@@ -171,5 +171,29 @@ registerType({
     // an absolute epsilon is the right test here.
     if (!(l > EPS)) return { reason: '角的边共线' };
     return { kind: 'ray', at: vertex, dir: { x: sum.x / l, y: sum.y / l } };
+  },
+});
+
+registerType({
+  name: 'perpendicularBisector',
+  title: '垂直平分线',
+  parentKinds: [['point', 'point']],
+  /**
+   * The line through the midpoint of the two parents, perpendicular to the
+   * segment joining them — the locus of the points equidistant from both
+   * (DESIGN.md §3 "perpendicular bisectors").
+   *
+   * It is a `line`, not a ray or a segment: the bisector of a segment is
+   * unbounded on both sides, and every consumer that needs a piece of it can
+   * intersect it with something. Coincident parents leave the perpendicular
+   * direction — and the segment itself — undefined.
+   */
+  compute(parents: Geometry[], _params: Json, _env: Env): Geometry | Undefined {
+    const points = asPoints(parents, 2);
+    if (!points) return { reason: 'bad parents: expected two points' };
+    if (!points.every(finite)) return { reason: '非有限坐标' };
+    const dir = unitDirection(points[0], points[1]);
+    if (!dir) return { reason: '两点重合' };
+    return { kind: 'line', at: midpointOf(points[0], points[1]), dir: { x: -dir.y, y: dir.x } };
   },
 });

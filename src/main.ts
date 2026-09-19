@@ -1,4 +1,5 @@
 import { Store } from './app/store';
+import { createEmptyDoc } from './engine';
 import { attachBoard } from './interaction/board';
 import { registerServiceWorker } from './io/pwa';
 import { autosaveClear, autosaveLoad, autosaveSave, openDocFile, saveDocFile } from './io/persist';
@@ -7,6 +8,11 @@ import { attachChip } from './ui/chip';
 import { attachInspector } from './ui/inspector';
 import { attachToolbar } from './ui/toolbar';
 import { toolHint } from './ui/labels';
+import { attachMenuBar } from './ui/menu';
+import { showStyleDialog } from './ui/style-dialog';
+import { attachAnimationClock, eraseTraces, showAllHidden, toggleAnimate, toggleHidden, toggleTrace } from './interaction/display';
+import { deleteSelection, detachSelection, exportPng, printSketch, selectAll, selectChildren, selectParents } from './app/commands';
+import type { MenuCommands } from './engine/menu-model';
 
 function el<T extends HTMLElement>(sel: string): T {
   const node = document.querySelector<T>(sel);
@@ -56,6 +62,39 @@ attachToolbar(el<HTMLElement>('#tools'), store);
 attachActionBar(el<HTMLElement>('#actionbar'), store);
 attachChip(el<HTMLElement>('#chip'), store);
 attachInspector(el<HTMLElement>('#sheet'), store);
+
+// The single seam where UI, interaction and the engine meet: the menu model
+// receives these as data, so no module underneath imports another layer.
+const commands: MenuCommands = {
+  newFile: () => {
+    if (store.doc.objects.length > 0 && !window.confirm('新建将清空当前图形，继续？')) return;
+    store.load(createEmptyDoc());
+    autosaveClear();
+    fileName = 'untitled.geosketch';
+  },
+  undo: () => store.undo(),
+  redo: () => store.redo(),
+  selectAll: () => selectAll(store),
+  selectParents: () => selectParents(store),
+  selectChildren: () => selectChildren(store),
+  deleteSelection: () => deleteSelection(store),
+  detachSelection: () => detachSelection(store),
+  editStyle: () => showStyleDialog(store),
+  toggleHidden: () => toggleHidden(store),
+  toggleTrace: () => toggleTrace(store),
+  toggleAnimate: () => toggleAnimate(store),
+  eraseTraces: () => eraseTraces(store),
+  showAllHidden: () => showAllHidden(store),
+  openFile: () => btnOpen.click(),
+  saveFile: () => btnSave.click(),
+  saveFileAs: () => btnSave.click(),
+  exportPng: () => exportPng(),
+  // Disabled in the menu until the SVG serializer lands (wave B).
+  exportSvg: () => undefined,
+  print: () => printSketch(),
+};
+attachMenuBar(el<HTMLElement>('#menubar'), store, commands);
+attachAnimationClock(store);
 refreshChrome();
 
 btnUndo.addEventListener('click', () => store.undo());

@@ -23,6 +23,7 @@ import {
   finishPending,
   pendingCount,
   reduceClick,
+  textRecord,
   type PendingState,
   type Reduction,
 } from './tools';
@@ -482,6 +483,47 @@ describe('measurements', () => {
     const result = click(board, { x: 2, y: 0 });
     expect(result.created).toEqual([]);
     expect(board.doc.objects).toHaveLength(3);
+  });
+});
+
+describe('text tool', () => {
+  it('asks the caller for the string at the clicked point, creating nothing itself', () => {
+    const board = start([], 'text');
+    const result = tap(board, -3, 2);
+    expect(result.created).toEqual([]);
+    expect(result.askAt).toEqual({ x: -3, y: 2 });
+    expect(result.select).toBeUndefined();
+    expect(board.doc.objects).toEqual([]);
+  });
+
+  it('asks at the click position even when it lands on an object — text does not snap', () => {
+    const objects = [point('A', 0, 0), point('B', 4, 0), segment('s', ['A', 'B'])];
+    const board = start(objects, 'text');
+    const onSegment = click(board, { x: 2, y: 0 });
+    expect(onSegment.askAt).toEqual({ x: 2, y: 0 });
+    const onPoint = click(board, { x: 4, y: 0 });
+    expect(onPoint.askAt).toEqual({ x: 4, y: 0 });
+    expect(board.doc.objects).toHaveLength(3);
+  });
+
+  it('stays armed for the next click, holding nothing', () => {
+    const board = start([], 'text');
+    const result = tap(board, 1, 1);
+    expect(result.next.tool).toBe('text');
+    expect(pendingCount(result.next)).toBe(0);
+  });
+
+  it('makes a free text record from a confirmed answer', () => {
+    const record = textRecord({ x: -3, y: 2.5 }, '= 4');
+    expect(record.type).toBe('text.free');
+    expect(record.parents).toEqual([]);
+    expect(record.params).toEqual({ x: -3, y: 2.5, text: '= 4' });
+    expect(textRecord({ x: 0, y: 0 }, 'a').id).not.toBe(textRecord({ x: 0, y: 0 }, 'a').id);
+  });
+
+  it('is plain JSON, so it round-trips through a .geosketch file', () => {
+    const record = textRecord({ x: 1, y: -2 }, '∠ABC = 60°');
+    expect(JSON.parse(JSON.stringify(record))).toEqual(record);
   });
 });
 

@@ -359,3 +359,53 @@ describe('angleBisector', () => {
     expectDeterministic('angleBisector', [P(4, 1), P(0, 0), P(1, 4)]);
   });
 });
+
+describe('perpendicularBisector', () => {
+  it('is registered with the title and parent kinds the action bar reads', () => {
+    expect(registry.get('perpendicularBisector')?.title).toBe('垂直平分线');
+    expect(registry.get('perpendicularBisector')?.parentKinds).toEqual([['point', 'point']]);
+  });
+
+  it('passes through the midpoint and is perpendicular to the parents', () => {
+    const a = V(-2, 1);
+    const b = V(4, 5);
+    const result = defined('perpendicularBisector', [P(a.x, a.y), P(b.x, b.y)]);
+
+    expect(result.kind).toBe('line');
+    expect(anchorOf(result)).toEqual(atOf(defined('midpoint', [P(a.x, a.y), P(b.x, b.y)])));
+    expect(len(dirOf(result))).toBeCloseTo(1, 12);
+    expect(Math.abs(dot(dirOf(result), unit(b.x - a.x, b.y - a.y)))).toBeLessThan(1e-9);
+  });
+
+  it('is the locus of the points equidistant from both parents', () => {
+    const values = seededValues(31337, 1200);
+    for (let i = 0; i + 3 < values.length; i += 4) {
+      const a = V(values[i], values[i + 1]);
+      const b = V(values[i + 2], values[i + 3]);
+      if (len(sub(b, a)) < 0.5) continue;
+      const result = defined('perpendicularBisector', [P(a.x, a.y), P(b.x, b.y)]);
+      const at = anchorOf(result);
+      const dir = dirOf(result);
+
+      // The midpoint is on the line…
+      expect(dist(at, a)).toBeCloseTo(dist(at, b), 9);
+      expect(Math.abs(dot(dir, sub(at, a)))).toBeLessThan(1e-9);
+      // …and every other point along it is equidistant too.
+      for (const t of [-7, -1.25, 0, 0.75, 3]) {
+        const point = V(at.x + dir.x * t, at.y + dir.y * t);
+        expect(Math.abs(dist(point, a) - dist(point, b))).toBeLessThan(1e-9 * (1 + dist(a, b)));
+      }
+    }
+  });
+
+  it('reports why it cannot be built', () => {
+    expect(reasonOf('perpendicularBisector', [P(2, -1), P(2, -1)])).toBe('两点重合');
+    expect(reasonOf('perpendicularBisector', [P(Number.NaN, 0), P(1, 1)])).toBe('非有限坐标');
+    expect(reasonOf('perpendicularBisector', [P(0, 0)])).toMatch(/bad parents/);
+    expect(reasonOf('perpendicularBisector', [P(0, 0), segment(0, 0, 1, 1)])).toMatch(/bad parents/);
+  });
+
+  it('is deterministic for identical inputs', () => {
+    expectDeterministic('perpendicularBisector', [P(-1, 3), P(5, -2)]);
+  });
+});

@@ -76,6 +76,8 @@ const KIND_WORDS: Record<GeometryKind, string> = {
   circle: '圆',
   polygon: '多边形',
   number: '数值',
+  arc: '弧',
+  text: '文本',
   path: '对象',
   any: '任意',
 };
@@ -148,7 +150,12 @@ export function actionsFor(doc: Doc, scene: Scene, selection: Id[]): Action[] {
  */
 export function nextStepHint(doc: Doc, scene: Scene, selection: Id[]): string | undefined {
   const kinds = selectedKinds(doc, scene, selection);
-  if (kinds === undefined || actionsFor(doc, scene, selection).length > 0) return undefined;
+  if (kinds === undefined) return undefined;
+  // Measurements now exist for almost every selection (a lone point has 坐标,
+  // a lone segment 斜率/方程), so only a *construction* already being available
+  // silences the hint: its job is teaching what one more tap unlocks, not
+  // reporting what can already be measured.
+  if (actionsFor(doc, scene, selection).some((action) => action.group === '构造')) return undefined;
   for (const type of orderedTypes()) {
     for (let sig = 0; sig < type.parentKinds.length; sig++) {
       const signature = type.parentKinds[sig];

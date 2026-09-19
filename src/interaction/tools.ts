@@ -19,6 +19,12 @@
  * of objects within the pointer's tolerance, so re-testing distances here would
  * be a second, drifting opinion about what the teacher tapped.
  *
+ * One gesture cannot be finished here: the 文本 tool needs a string from the
+ * teacher, and asking for it is the caller's job. That click therefore reduces
+ * to `askAt` — "ask, and if the answer is confirmed, put text here" — so the
+ * prompt (a DOM call) stays out of this module and the rest of the tool is still
+ * covered by tests.
+ *
  * Per-click undo granularity: every click that creates something is its own
  * edit (GSP's "the clicked point is real immediately"), so one reduction's
  * `created` records all belong to the click that produced them.
@@ -76,6 +82,11 @@ export interface Reduction {
   select?: Id[];
   /** The object a `delete` click landed on; the caller expands the cascade (D10). */
   remove?: Id;
+  /**
+   * The 文本 tool's click: the caller asks for the string and — only if the
+   * teacher confirms — makes the text with `textRecord`.
+   */
+  askAt?: Vec2;
   /** What the tool is holding for the next click. */
   next: PendingState;
 }
@@ -390,6 +401,24 @@ function reducePointTool(ctx: ClickContext, pending: PendingState): Reduction {
 }
 
 /**
+ * `text`: free text sits where it was typed, so the click carries no parents and
+ * snaps to nothing — a click on an object places the text over that object
+ * without becoming part of its definition. The string itself comes from the
+ * caller (`askAt`), which is what keeps the prompt out of this module.
+ */
+function reduceText(ctx: ClickContext, pending: PendingState): Reduction {
+  return { created: [], askAt: ctx.world, next: pending };
+}
+
+/**
+ * The record a confirmed 文本 click makes: a free text at world `at`, defined by
+ * nothing, so it never moves with the figure (and never disappears with it).
+ */
+export function textRecord(at: Vec2, text: string): ObjRecord {
+  return { id: newId(), type: 'text.free', parents: [], params: { x: at.x, y: at.y, text } };
+}
+
+/**
  * `delete`: the topmost object under the click. The cascade and its preview are
  * the caller's — this only decides *which* object was aimed at.
  */
@@ -428,6 +457,8 @@ export function reduceClick(ctx: ClickContext, pending: PendingState): Reduction
       return reduceAngle(ctx, state);
     case 'measure.area':
       return reduceArea(ctx, state);
+    case 'text':
+      return reduceText(ctx, state);
     case 'delete':
       return reduceDelete(ctx, state);
   }
